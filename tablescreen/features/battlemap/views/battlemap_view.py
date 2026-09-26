@@ -9,22 +9,27 @@ from typing import Optional
 
 from PIL import Image, ImageTk
 
+from ..styling import *
+
+from typing import Tuple
+
 from ....core.paths import IMAGES_DIR
 
-class BattleMapView:
+class BattleMapView(tk.Frame):
     """Displays one image, scaled to fit its frame while preserving aspect."""
 
     def __init__(self, parent: tk.Widget):
-        self.label = tk.Label(parent, bg="black")
-        self.label.pack(fill="both", expand=True)
+        super().__init__(parent, bg=PALETTE["bg"])
+        self.canvas = tk.Canvas(self, bg=PALETTE["surface"], bd=0, highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
 
         self._original: Optional[Image.Image] = None
         self._photo: Optional[ImageTk.PhotoImage] = None
         self._filename: Optional[str] = None
 
-        # Re-render when the frame itself changes size (the window was
-        # resized), not only when a new image is shown.
-        self.label.bind("<Configure>", lambda e: self.rescale())
+        self.grid = False
+
+        self.canvas.bind("<Configure>", lambda e: self.rescale((e.width, e.height)))
 
     # ── Loading ───────────────────────────────────────────────────────────
 
@@ -59,32 +64,35 @@ class BattleMapView:
                 return
         self.rescale()
 
-    def rescale(self) -> None:
+    def rescale(self, new_size: Tuple[int, int] | None = None) -> None:
         """Redraw the current image letterboxed into the frame."""
         if self._original is None:
-            self.label.config(image=None)
+            self.canvas.delete("backdrop")
             return
 
-        width = self.label.winfo_width()
-        height = self.label.winfo_height()
-        # During construction the widget reports 1x1; nothing useful to draw.
+        if new_size is not None:
+            width, height = new_size
+        else:
+            width = self.canvas.winfo_width()
+            height = self.canvas.winfo_height()
+            # During construction the widget reports 1x1; nothing useful to draw.
         if width <= 1 or height <= 1:
             return
 
         img = self._original.copy()
-        img_w, img_h = img.size
-        scale = min(width / img_w, height / img_h)
-        new_w = max(1, int(img_w * scale))
-        new_h = max(1, int(img_h * scale))
-
-        img = img.resize((new_w, new_h), Image.LANCZOS)  # type: ignore[attr-defined]
-        # Keep a reference: Tk does not own PhotoImage data, so dropping the
-        # last Python reference would blank the label.
+        img = img.resize((width, height), Image.LANCZOS)
         self._photo = ImageTk.PhotoImage(img)
-        self.label.config(image=self._photo)
+        self.canvas.delete("backdrop")
+        self.canvas.create_image(0, 0, image=self._photo, anchor="nw", tags="backdrop")
 
-    def clear(self) -> None:
-        self._original = None
-        self._photo = None
-        self._filename = None
-        self.label.config(image="")
+        if self.grid:
+            self.draw_grid()
+
+#    def draw_grid(self):
+        
+
+    # def clear(self) -> None:
+    #     self._original = None
+    #     self._photo = None
+    #     self._filename = None
+    #     self.label.config(image="")

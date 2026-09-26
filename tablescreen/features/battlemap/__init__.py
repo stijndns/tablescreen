@@ -43,6 +43,7 @@ class BattleMapFeature(FeatureBase):
         window_name = services.window_name()
         self.slot = services.slot(window_name)
         view = BattleMapView(self.slot.frame)
+        view.pack(fill="both", expand=True)
         self.views.append(view)
 
         # Re-letterbox the image when the window is resized or fullscreened.
@@ -82,6 +83,10 @@ class BattleMapFeature(FeatureBase):
             self.services.send(self.name, "fullscreen")
         elif sub == "restore":
             self.services.send(self.name, "restore")
+        elif sub == "grid":
+            if rest[0].lower() == 'on':
+                self.services.send(self.name, "")
+
 
 
     # ── Bus consumer  ─────────────────────────────────────────────────────
@@ -91,6 +96,8 @@ class BattleMapFeature(FeatureBase):
 
         if message.command == "show":
             self.slot.show()
+            self.refresh()
+        elif message.command == "render":
             self.refresh()
         elif message.command == "fullscreen":
             monitor = window.fullscreen()
