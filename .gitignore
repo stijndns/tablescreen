@@ -175,3 +175,7 @@ poetry.toml
 
 # LSP config files
 pyrightconfig.json
+
+### Tablescreen ###
+# Animated battlemaps are large; keep them out of the repo.
+*.webm

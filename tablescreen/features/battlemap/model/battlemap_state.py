@@ -1,15 +1,9 @@
 """
 battlemapstate.py — Battlemap state model for Tablescreen.
 
-Plain data, mutated on the shell thread and handed to the views as a
-snapshot. Nothing here knows about pixels; the view turns the grid scale into
-a cell size using the calibration in grid.py.
-
-Only what every view must agree on belongs here. The grid scale defines what
-a cell *is* (coordinates and AoE will depend on it), so it is shared. So is
-the coordinate notation: everyone at the table names cells from the labels,
-and future commands will parse cell references in the same notation. Whether
-a view draws the grid or labels, and where, is presentation: on the view.
+Mutated on the shell thread, handed to views as a snapshot. Only what every
+view must agree on lives here (cell scale, coordinate notation); what a view
+shows, and where, lives on the view.
 """
 
 from typing import Optional

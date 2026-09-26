@@ -1,11 +1,6 @@
 """
-battlemap — Display the grid-based battlemap.
-
-The grid is calibrated in physical inches (see model/grid.py). Pixels per
-inch come from config's `pixels_per_inch` override if set, otherwise from the
-screen diagonal in config and the resolution of the monitor the window is on.
-Resolving that needs Tk, so it happens on the mainloop thread, in
-``_calibration()``, which the view calls every time it draws the grid.
+battlemap — Backdrop (image or looping video) with a calibrated grid and
+coordinate labels, for a TV lying flat under the minis.
 """
 
 from __future__ import annotations
@@ -22,13 +17,14 @@ from .model.grid import (COORD_LOCATIONS, COORD_STYLES, GridSettings,
                          MAX_SCALE_PCT, MIN_CELL_PX, MIN_LABEL_FONT_PX,
                          MIN_SCALE_PCT, cell_px, label_font_px,
                          pixels_per_inch)
+from .video import VIDEO_EXTENSIONS
 from .views.battlemap_view import BattleMapView
 
 CURRENT_OS = platform.system()
 
 BATTLEMAP_HELP = """\
 Battlemap commands:
-    map show <file>                 — load and show the battlemap window
+    map show <file>                 — show an image or a looping .webm video
     map bgclear                     — clear the backdrop (window stays)
     map fullscreen                  — borderless fullscreen on its monitor
     map restore                     — back to default windowed size
@@ -84,6 +80,10 @@ class BattleMapFeature(FeatureBase):
 
         services.subscribe(self._on_message)
 
+    def shutdown(self) -> None:
+        for view in self.views:
+            view.close()        # stops the video decoder thread
+
     def snapshot(self) -> dict:
         return self.state.snapshot()
 
@@ -125,9 +125,7 @@ class BattleMapFeature(FeatureBase):
         if action == "status":
             self._send_grid("status")
         elif action in ("on", "off"):
-            # Visibility is per-view presentation, not model state: nothing
-            # to mutate here, the consumer applies it to the view.
-            self._send_grid(action)
+            self._send_grid(action)     # per-view: applied by the consumer
         elif action == "resize":
             pct = self._parse_percent(rest[1] if len(rest) > 1 else "")
             if pct is None:
@@ -140,9 +138,8 @@ class BattleMapFeature(FeatureBase):
             print("Usage: map grid [on | off | resize <percent>]")
 
     def _send_grid(self, action: str) -> None:
-        """Send a grid message carrying the scale as of this command, so the
-        report describes this command even if later ones have already
-        changed the state by the time the mainloop handles it."""
+        """Carries the scale as of this command, so the report stays accurate
+        when later commands change state before the mainloop gets here."""
         self.services.send(self.name, "grid", (action, self.state.grid_scale_pct))
 
     def _cmd_coords(self, rest: list[str]) -> None:
@@ -227,14 +224,9 @@ class BattleMapFeature(FeatureBase):
     # ── Grid calibration (mainloop thread — reads Tk geometry) ────────────
 
     def _calibration(self) -> tuple[Optional[float], str]:
-        """Pixels per inch and a description of where the number came from.
-
-        Order: config override; the monitor the window is on; Tk's screen
-        size as a last resort. The window's own size is deliberately not
-        used, even when fullscreen: the WM applies fullscreen asynchronously
-        (or not at all), and a half-applied window gives a wildly wrong
-        density. OS display scaling is handled by the override.
-        """
+        """Pixels per inch and where it came from: config override, else the
+        window's monitor, else Tk's screen. Never the window's own size —
+        fullscreen applies asynchronously and a half-applied size is wrong."""
         settings = self.grid_settings
         if settings.pixels_per_inch is not None:
             return settings.pixels_per_inch, "pixels_per_inch override in config"
@@ -277,14 +269,9 @@ class BattleMapFeature(FeatureBase):
         return report
 
     def _label_font_px(self, scale: float, location: str) -> Optional[int]:
-        """Label font size at a given scale, for reports.
-
-        Computed from the scale carried in the message, not read from the
-        view: the view already shows the *latest* shared state, which may be
-        several commands ahead when input arrives quickly (e.g. piped).
-        Per-view settings (location, on/off) are safe to read from the view,
-        because only messages change them, and those are handled in order.
-        """
+        """Label font size for reports, from the scale carried in the message.
+        The view may already show later state; per-view settings are safe to
+        read from it because only in-order messages change them."""
         ppi, _ = self._calibration()
         if ppi is None:
             return None
@@ -324,7 +311,7 @@ class BattleMapFeature(FeatureBase):
             if len(parts) == 2:
                 clean = line.split()[-1] if not line.endswith(" ") else ""
                 #print(f"clean: {clean}")
-                return tab_completion(clean, list(Image.registered_extensions()),
+                return tab_completion(clean, [*Image.registered_extensions(), *VIDEO_EXTENSIONS],
                                         CURRENT_OS, "image")
             return []
         if sub == "grid" and len(parts) == 2:

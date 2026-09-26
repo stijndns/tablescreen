@@ -1,15 +1,9 @@
 """
 battlemap_view.py — The battlemap display.
 
-One canvas, drawn in tagged layers so each can be cleared independently:
-
-    backdrop  →  grid  →  coords      (bottom to top; _restack() enforces it)
-
-Only the backdrop is expensive to redraw (see _draw_backdrop), so the grid
-and coords layers are redrawn independently and never force a backdrop
-redraw.
-
-Mainloop thread only, like every view.
+One canvas in tagged layers: backdrop → grid → coords (bottom to top).
+The backdrop is a static image or a streamed video (see animation.py); it is
+expensive, so other layers never force it to redraw. Mainloop thread only.
 """
 
 from __future__ import annotations
@@ -22,6 +16,8 @@ from PIL import Image, ImageTk
 from ..styling import *
 from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, cell_px,
                           coord_labels, grid_line_positions, label_font_px)
+from ..video import VideoStream, is_video, oversize_warning, probe
+from .animation import AnimationClock, VideoBackdrop
 
 from ....core.paths import IMAGES_DIR
 
@@ -29,9 +25,7 @@ BACKDROP_TAG = "backdrop"
 GRID_TAG = "grid"
 COORDS_TAG = "coords"
 
-# Tk canvases have no transparency, so labels get a dark offset shadow to
-# stay readable on any backdrop.
-LABEL_SHADOW_COLOR = "black"
+LABEL_SHADOW_COLOR = "black"    # no canvas transparency, so labels get a shadow
 
 # Returns the current pixels per inch, or None if it cannot be determined.
 PpiProvider = Callable[[], Optional[float]]
@@ -60,14 +54,16 @@ class BattleMapView(tk.Frame):
         self._label_color = self._valid_color(
             grid_settings.label_color, "coords_color", self._grid_color)
         self._ppi_provider = ppi_provider
-        # Per-view presentation: each view decides whether it draws the grid
-        # and the coordinates, and where. The grid *scale* and the coordinate
-        # *style* are shared model state and arrive in the snapshot.
+        # Per-view settings; scale and style are shared and come in the snapshot.
         self._show_grid = False
         self._show_coords = False
         self._coords_location = grid_settings.coords_location
         self._grid_scale_pct = 100.0
         self._coords_style = grid_settings.coords_style
+
+        self._clock = AnimationClock(self.canvas)
+        self._video_path = None             # set when the backdrop is a video
+        self._video: Optional[VideoBackdrop] = None
 
         self.canvas.bind("<Configure>", lambda e: self.rescale((e.width, e.height)))
 
@@ -83,8 +79,9 @@ class BattleMapView(tk.Frame):
     # ── Loading ───────────────────────────────────────────────────────────
 
     def load(self, filename: str) -> bool:
-        """Load an image by name, relative to assets/images."""
+        """Load an image or video by name, relative to assets/images."""
         if not filename:
+            self._stop_video()
             self._original = None
             self._photo = None
             self._filename = None
@@ -94,14 +91,47 @@ class BattleMapView(tk.Frame):
         if not path.exists():
             print(f"[!] File not found: {path}")
             return False
+        if is_video(filename):
+            return self._load_video(path, filename)
         try:
-            self._original = Image.open(path)
-            self._filename = filename
-            print(f"[+] Loaded image: {filename}")
-            return True
+            original = Image.open(path)
         except Exception as exc:
             print(f"[!] Error loading image: {exc}")
             return False
+        self._stop_video()
+        self._original = original
+        self._filename = filename
+        print(f"[+] Loaded image: {filename}")
+        return True
+
+    def _load_video(self, path, filename: str) -> bool:
+        try:
+            info = probe(path)
+        except Exception as exc:
+            print(f"[!] Error loading video: {exc}")
+            return False
+        self._stop_video()
+        self._original = None
+        self._video_path = path
+        self._filename = filename
+        length = f", {info.duration:.0f} s loop" if info.duration else ""
+        print(f"[+] Loaded video: {filename} ({info.width}x{info.height} "
+              f"@ {info.fps:g} fps{length})")
+        warning = oversize_warning(info, filename)
+        if warning:
+            print(f"[!] {warning}")
+        return True
+
+    def _stop_video(self) -> None:
+        if self._video is not None:
+            self._clock.remove(self._video)
+            self._video.close()
+            self._video = None
+        self._video_path = None
+
+    def close(self) -> None:
+        """Stop background work (the video decoder). Called on shutdown."""
+        self._stop_video()
 
     # ── Rendering ─────────────────────────────────────────────────────────
 
@@ -131,11 +161,7 @@ class BattleMapView(tk.Frame):
         self._draw_coords(width, height)
 
     def _restack(self) -> None:
-        """Enforce the layer order: backdrop → grid → coords (bottom to top).
-
-        Each draw creates items on top of everything, so every layer draw
-        calls this. Raising a missing tag is a safe no-op.
-        """
+        """Enforce backdrop → grid → coords; new items always land on top."""
         self.canvas.tag_lower(BACKDROP_TAG)
         self.canvas.tag_raise(GRID_TAG)
         self.canvas.tag_raise(COORDS_TAG)
@@ -146,10 +172,19 @@ class BattleMapView(tk.Frame):
             return      # same image at the same size is already drawn
         self._backdrop_key = key
 
-        # Free the old image before building the new one, so two full-size
-        # copies never coexist. Delete the canvas item first: Tk keeps the
-        # image data alive while an item still references it. No flicker —
-        # Tk only repaints at idle, after the new item exists.
+        if self._video_path is not None:
+            if self._video is None:
+                stream = VideoStream(self._video_path, (width, height))
+                self._video = VideoBackdrop(self.canvas, stream, (width, height),
+                                            BACKDROP_TAG)
+                self._clock.add(self._video)
+            else:
+                self._video.resize((width, height))
+            self._restack()
+            return
+
+        # Free the old image first (item before photo: Tk holds the data while
+        # an item uses it), so two full-size copies never coexist.
         self.canvas.delete(BACKDROP_TAG)
         self._photo = None
         if self._original is None:

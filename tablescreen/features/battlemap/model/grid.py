@@ -1,17 +1,8 @@
 """
-grid.py — Battlemap grid calibration and geometry. No Tk.
+grid.py — Grid calibration, geometry and coordinate labels. No Tk.
 
-Everything that turns physical inches into screen pixels lives here, so the
-maths can be tested without a display and there is exactly one place to
-change when calibration changes.
-
-    screen diagonal (config) + monitor resolution  ─►  pixels per inch
-    pixels per inch × cell size (config) × scale %  ─►  cell size in pixels
-    cell size in pixels  ─►  cell_to_pixels(col, row)  ─►  grid lines
-
-Positions are always ``index * cell_px`` from the origin, never "previous
-line + cell_px": at ~88.1 px per cell, rounding per step drifts by several
-pixels across the width of the TV.
+Positions are always ``index * cell_px`` from the origin, never accumulated,
+so fractional cells (~88.1 px) don't drift across the TV.
 """
 
 from __future__ import annotations
@@ -129,16 +120,9 @@ def cell_px(ppi: float, cell_size_in: float, scale_pct: float = 100.0) -> float:
 # ── Geometry ─────────────────────────────────────────────────────────────────
 
 def cell_to_pixels(*, row: int, col: int, cell: float) -> tuple[float, float]:
-    """Top-left pixel (x, y) of a cell. 1-based, origin top-left.
-
-    The single source of truth for where a cell is. Grid lines, coordinate
-    labels and anything placed on a cell must all go through this so they
-    cannot drift apart on the fractional edge cells.
-
-    Cells are addressed ROW FIRST (``E8`` / ``5,8`` = row 5, column 8) but
-    pixels are (x, y), i.e. column first. Keyword-only arguments make a
-    swapped call visibly wrong instead of silently wrong.
-    """
+    """Top-left pixel (x, y) of a cell; 1-based. Everything placed on a cell
+    goes through this. Keyword-only because cells are row first but pixels
+    are x first."""
     return (col - 1) * cell, (row - 1) * cell
 
 
@@ -155,11 +139,7 @@ def grid_line_positions(extent_px: float, cell: float) -> list[float]:
 
 
 # ── Coordinate labels ────────────────────────────────────────────────────────
-#
-# Row first everywhere. Letter style puts letters on rows: the TV is 44x25
-# cells at 1", so rows stay single letters (A-Y) where columns would need
-# AA-AR. Numeric style uses the same order so both name the same cell:
-# row 5, column 8 is "E8" or "5,8".
+# Row first: "5,8" / "E8". Letters are rows so the 25-row TV stays A-Y.
 
 COORD_STYLES = ("numbers", "letters")
 COORD_LOCATIONS = ("sides", "cells")
@@ -216,16 +196,12 @@ def label_font_px(cell: float, location: str) -> Optional[int]:
 
 def coord_labels(width: float, height: float, cell: float,
                  location: str, style: str) -> list[Label]:
-    """Every coordinate label for a canvas of this size.
+    """Every label for a canvas of this size.
 
-    sides: column numbers centred horizontally along the top edge of row 1,
-           row labels centred vertically along the left edge of column 1.
-    cells: the full coordinate in the top-left corner of every cell, clear
-           of a mini standing in the middle.
-
-    Partial edge cells are included when the label's anchor point is on the
-    canvas; whether the text itself fits is for the view to check, since
-    only Tk can measure text.
+    sides: column numbers along the top edge, row labels along the left.
+    cells: the full coordinate in each cell's top-left corner.
+    Partial edge cells are included if the anchor is on the canvas; the view
+    drops labels whose text would be clipped.
     """
     if cell <= 0:
         raise ValueError("cell size must be positive")
