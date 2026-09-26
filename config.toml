@@ -25,6 +25,10 @@ cell_size_in = 1.0          # one grid cell, in inches
 # pixels_per_inch = 88.1    # optional override
 grid_color = "#ffffff"
 grid_width = 1
+# Coordinate labels (map coords ...). Row first either way: 5,8 or E8.
+coords_style = "numbers"    # numbers | letters
+coords_location = "sides"   # sides | cells
+# coords_color = "#ffffff"  # defaults to grid_color
 
 [windows]
 mainscreen = "800x600"

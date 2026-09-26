@@ -43,6 +43,13 @@ class GridSettings:
     pixels_per_inch: Optional[float] = None   # override; None = derive
     color: str = DEFAULT_GRID_COLOR
     width: int = DEFAULT_GRID_WIDTH
+    coords_style: str = "numbers"             # default; runtime value is state
+    coords_location: str = "sides"            # default; runtime value is per view
+    coords_color: Optional[str] = None        # None = same as the grid colour
+
+    @property
+    def label_color(self) -> str:
+        return self.coords_color or self.color
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> tuple["GridSettings", list[str]]:
@@ -63,11 +70,24 @@ class GridSettings:
                             f"using {default}.")
             return default
 
-        color = config.get("grid_color", DEFAULT_GRID_COLOR)
-        if not isinstance(color, str) or not color.strip():
-            warnings.append(f"grid_color must be a colour string, got {color!r}; "
-                            f"using {DEFAULT_GRID_COLOR}.")
-            color = DEFAULT_GRID_COLOR
+        def colour(key: str, default: Optional[str]) -> Optional[str]:
+            if key not in config:
+                return default
+            value = config[key]
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            warnings.append(f"{key} must be a colour string, got {value!r}; "
+                            f"using {default or 'the grid colour'}.")
+            return default
+
+        def choice(key: str, options: tuple[str, ...]) -> str:
+            default = options[0]
+            value = config.get(key, default)
+            if isinstance(value, str) and value.strip().lower() in options:
+                return value.strip().lower()
+            warnings.append(f"{key} must be one of {', '.join(options)}, "
+                            f"got {value!r}; using {default}.")
+            return default
 
         width = config.get("grid_width", DEFAULT_GRID_WIDTH)
         if isinstance(width, bool) or not isinstance(width, int) or width < 1:
@@ -79,8 +99,11 @@ class GridSettings:
             screen_diagonal_in=positive("screen_diagonal_in", DEFAULT_SCREEN_DIAGONAL_IN),
             cell_size_in=positive("cell_size_in", DEFAULT_CELL_SIZE_IN),
             pixels_per_inch=positive("pixels_per_inch", None),
-            color=color.strip(),
+            color=colour("grid_color", DEFAULT_GRID_COLOR),
             width=width,
+            coords_style=choice("coords_style", COORD_STYLES),
+            coords_location=choice("coords_location", COORD_LOCATIONS),
+            coords_color=colour("coords_color", None),
         )
         return settings, warnings
 
@@ -105,12 +128,16 @@ def cell_px(ppi: float, cell_size_in: float, scale_pct: float = 100.0) -> float:
 
 # ── Geometry ─────────────────────────────────────────────────────────────────
 
-def cell_to_pixels(col: int, row: int, cell: float) -> tuple[float, float]:
-    """Top-left pixel of a cell. 1-based, origin top-left: (1, 1) → (0, 0).
+def cell_to_pixels(*, row: int, col: int, cell: float) -> tuple[float, float]:
+    """Top-left pixel (x, y) of a cell. 1-based, origin top-left.
 
     The single source of truth for where a cell is. Grid lines, coordinate
     labels and anything placed on a cell must all go through this so they
     cannot drift apart on the fractional edge cells.
+
+    Cells are addressed ROW FIRST (``E8`` / ``5,8`` = row 5, column 8) but
+    pixels are (x, y), i.e. column first. Keyword-only arguments make a
+    swapped call visibly wrong instead of silently wrong.
     """
     return (col - 1) * cell, (row - 1) * cell
 
@@ -124,4 +151,103 @@ def grid_line_positions(extent_px: float, cell: float) -> list[float]:
     if cell <= 0:
         raise ValueError("cell size must be positive")
     count = int(extent_px // cell) + 1
-    return [cell_to_pixels(i + 1, 1, cell)[0] for i in range(count)]
+    return [cell_to_pixels(row=1, col=i + 1, cell=cell)[0] for i in range(count)]
+
+
+# ── Coordinate labels ────────────────────────────────────────────────────────
+#
+# Row first everywhere. Letter style puts letters on rows: the TV is 44x25
+# cells at 1", so rows stay single letters (A-Y) where columns would need
+# AA-AR. Numeric style uses the same order so both name the same cell:
+# row 5, column 8 is "E8" or "5,8".
+
+COORD_STYLES = ("numbers", "letters")
+COORD_LOCATIONS = ("sides", "cells")
+
+# Font size as a fraction of the cell. In-cell labels share the cell with a
+# mini, so they are smaller.
+SIDE_FONT_FRACTION = 0.30
+CELL_FONT_FRACTION = 0.18
+MIN_LABEL_FONT_PX = 8          # below this, labels are not drawn
+
+
+@dataclass(frozen=True)
+class Label:
+    """One coordinate label: text at a pixel position with a Tk anchor."""
+    text: str
+    x: float
+    y: float
+    anchor: str
+
+
+def row_label(row: int, style: str) -> str:
+    """Row name: "5" in numbers style; bijective base-26 letters otherwise
+    (1 → A, 26 → Z, 27 → AA, 52 → AZ, 53 → BA)."""
+    if row < 1:
+        raise ValueError("rows are 1-based")
+    if style == "numbers":
+        return str(row)
+    letters = ""
+    while row > 0:
+        row, rem = divmod(row - 1, 26)
+        letters = chr(ord("A") + rem) + letters
+    return letters
+
+
+def col_label(col: int) -> str:
+    """Columns are numbers in both styles."""
+    if col < 1:
+        raise ValueError("columns are 1-based")
+    return str(col)
+
+
+def cell_label(row: int, col: int, style: str) -> str:
+    """Full coordinate, row first: "5,8" (numbers) or "E8" (letters)."""
+    sep = "," if style == "numbers" else ""
+    return f"{row_label(row, style)}{sep}{col_label(col)}"
+
+
+def label_font_px(cell: float, location: str) -> Optional[int]:
+    """Label font size in pixels for this cell size, or None if too small."""
+    fraction = SIDE_FONT_FRACTION if location == "sides" else CELL_FONT_FRACTION
+    size = int(cell * fraction)
+    return size if size >= MIN_LABEL_FONT_PX else None
+
+
+def coord_labels(width: float, height: float, cell: float,
+                 location: str, style: str) -> list[Label]:
+    """Every coordinate label for a canvas of this size.
+
+    sides: column numbers centred horizontally along the top edge of row 1,
+           row labels centred vertically along the left edge of column 1.
+    cells: the full coordinate in the top-left corner of every cell, clear
+           of a mini standing in the middle.
+
+    Partial edge cells are included when the label's anchor point is on the
+    canvas; whether the text itself fits is for the view to check, since
+    only Tk can measure text.
+    """
+    if cell <= 0:
+        raise ValueError("cell size must be positive")
+    pad = max(2.0, cell * 0.06)
+    cols = math.ceil(width / cell)      # includes a partial last column
+    rows = math.ceil(height / cell)
+    labels: list[Label] = []
+
+    if location == "sides":
+        for col in range(1, cols + 1):
+            x, y = cell_to_pixels(row=1, col=col, cell=cell)
+            if x + cell / 2 < width:
+                labels.append(Label(col_label(col), x + cell / 2, y + pad, "n"))
+        for row in range(1, rows + 1):
+            x, y = cell_to_pixels(row=row, col=1, cell=cell)
+            if y + cell / 2 < height:
+                labels.append(Label(row_label(row, style), x + pad, y + cell / 2, "w"))
+    else:
+        for row in range(1, rows + 1):
+            for col in range(1, cols + 1):
+                x, y = cell_to_pixels(row=row, col=col, cell=cell)
+                if x + pad < width and y + pad < height:
+                    labels.append(Label(cell_label(row, col, style),
+                                        x + pad, y + pad, "nw"))
+    return labels

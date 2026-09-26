@@ -18,8 +18,10 @@ from PIL import Image
 from ...core.completion import get_arg_parts, tab_completion
 from ...core.feature import FeatureBase, ShellServices
 from .model.battlemap_state import BattleMapState
-from .model.grid import (GridSettings, MAX_SCALE_PCT, MIN_CELL_PX,
-                         MIN_SCALE_PCT, cell_px, pixels_per_inch)
+from .model.grid import (COORD_LOCATIONS, COORD_STYLES, GridSettings,
+                         MAX_SCALE_PCT, MIN_CELL_PX, MIN_LABEL_FONT_PX,
+                         MIN_SCALE_PCT, cell_px, label_font_px,
+                         pixels_per_inch)
 from .views.battlemap_view import BattleMapView
 
 CURRENT_OS = platform.system()
@@ -33,7 +35,14 @@ Battlemap commands:
     map grid                        — show grid status and calibration
     map grid on | off               — show or hide the grid
     map grid resize <percent>       — cell size as % of the calibrated size
-                                      (100 = config's cell_size_in)
+                                      (100 = config's cell_size_in); affects
+                                      grid lines and coords
+    map coords                      — show coordinate label status
+    map coords on | off             — show or hide coordinate labels
+    map coords style numbers | letters
+                                    — row first: 5,8 (numbers) or E8 (letters)
+    map coords location sides | cells
+                                    — along the top/left edges, or in every cell
 """
 
 class BattleMapFeature(FeatureBase):
@@ -57,6 +66,7 @@ class BattleMapFeature(FeatureBase):
         self.grid_settings, warnings = GridSettings.from_config(services.config)
         for warning in warnings:
             print(f"[!] battlemap: {warning}")
+        self.state.set_coords_style(self.grid_settings.coords_style)
 
         window_name = services.window_name()
         self.slot = services.slot(window_name)
@@ -104,6 +114,8 @@ class BattleMapFeature(FeatureBase):
             self.services.send(self.name, "restore")
         elif sub == "grid":
             self._cmd_grid(rest)
+        elif sub == "coords":
+            self._cmd_coords(rest)
         else:
             print(f"[!] Unknown map sub-command '{sub}'. Type 'map help'.")
 
@@ -132,6 +144,36 @@ class BattleMapFeature(FeatureBase):
         report describes this command even if later ones have already
         changed the state by the time the mainloop handles it."""
         self.services.send(self.name, "grid", (action, self.state.grid_scale_pct))
+
+    def _cmd_coords(self, rest: list[str]) -> None:
+        action = rest[0].lower() if rest else "status"
+        value = rest[1].lower() if len(rest) > 1 else ""
+
+        if action in ("status", "on", "off"):
+            # On/off is per-view presentation, applied by the consumer.
+            self._send_coords(action)
+        elif action == "style":
+            if value not in COORD_STYLES:
+                print(f"Usage: map coords style {' | '.join(COORD_STYLES)}")
+                return
+            # Shared notation: model state, so every view (and later the
+            # cell-reference parser) agrees.
+            self.state.set_coords_style(value)
+            self._send_coords(action)
+        elif action == "location":
+            if value not in COORD_LOCATIONS:
+                print(f"Usage: map coords location {' | '.join(COORD_LOCATIONS)}")
+                return
+            self._send_coords(action, value)
+        else:
+            print("Usage: map coords [on | off | style <numbers | letters> | "
+                  "location <sides | cells>]")
+
+    def _send_coords(self, action: str, value: str = "") -> None:
+        """Like _send_grid: carries the shared state as of this command."""
+        self.services.send(self.name, "coords",
+                           (action, value, self.state.coords_style,
+                            self.state.grid_scale_pct))
 
     @staticmethod
     def _parse_percent(text: str) -> Optional[float]:
@@ -169,6 +211,18 @@ class BattleMapFeature(FeatureBase):
             if action in ("on", "off"):
                 view.set_show_grid(action == "on")
             print(self._grid_report(action, view.show_grid, scale))
+        elif message.command == "coords":
+            action, value, style, scale = message.arg
+            # Per-view settings target the primary view, as with the grid.
+            view = self.views[0]
+            if action == "on":
+                self.slot.show()
+            self.refresh()      # picks up a style change from the snapshot
+            if action in ("on", "off"):
+                view.set_show_coords(action == "on")
+            elif action == "location":
+                view.set_coords_location(value)
+            print(self._coords_report(action, view, style, scale))
 
     # ── Grid calibration (mainloop thread — reads Tk geometry) ────────────
 
@@ -214,6 +268,44 @@ class BattleMapFeature(FeatureBase):
                   f"= {cell:.1f} px ({ppi:.1f} px/in from {source}).")
         if cell < MIN_CELL_PX:
             report += f"\n[!] Cells under {MIN_CELL_PX:g} px are not drawn."
+        # Coords follow the cell size, so a resize can hide them silently.
+        view = self.views[0]
+        if view.show_coords and self._label_font_px(scale, view.coords_location) is None:
+            kind = "in-cell" if view.coords_location == "cells" else "side"
+            report += (f"\n[!] Coords hidden: cells too small for {kind} "
+                       f"labels (font under {MIN_LABEL_FONT_PX} px).")
+        return report
+
+    def _label_font_px(self, scale: float, location: str) -> Optional[int]:
+        """Label font size at a given scale, for reports.
+
+        Computed from the scale carried in the message, not read from the
+        view: the view already shows the *latest* shared state, which may be
+        several commands ahead when input arrives quickly (e.g. piped).
+        Per-view settings (location, on/off) are safe to read from the view,
+        because only messages change them, and those are handled in order.
+        """
+        ppi, _ = self._calibration()
+        if ppi is None:
+            return None
+        cell = cell_px(ppi, self.grid_settings.cell_size_in, scale)
+        return label_font_px(cell, location) if cell >= MIN_CELL_PX else None
+
+    def _coords_report(self, action: str, view: BattleMapView,
+                       style: str, scale: float) -> str:
+        if action == "off":
+            return "[+] Coords off."
+
+        state = "on" if view.show_coords else "off"
+        example = "E8" if style == "letters" else "5,8"
+        report = (f"[+] Coords {state}: {style} (row first, e.g. {example}), "
+                  f"{view.coords_location}")
+        size = self._label_font_px(scale, view.coords_location)
+        if size is None:
+            report += (f".\n[!] Cells too small for labels (font under "
+                       f"{MIN_LABEL_FONT_PX} px); none drawn.")
+        else:
+            report += f", {size} px font."
         return report
 
 
@@ -221,7 +313,7 @@ class BattleMapFeature(FeatureBase):
 
     def complete_battlemap(self, text, line, begidx, endidx) -> list[str]:
         parts = get_arg_parts(line[:begidx])
-        top_subs = ["show", "bgclear", "fullscreen", "restore", "grid"]
+        top_subs = ["show", "bgclear", "fullscreen", "restore", "grid", "coords"]
 
         if len(parts) == 1:
             return [s for s in top_subs if s.startswith(text)]
@@ -237,6 +329,16 @@ class BattleMapFeature(FeatureBase):
             return []
         if sub == "grid" and len(parts) == 2:
             return [s for s in ("on", "off", "resize") if s.startswith(text)]
+        if sub == "coords":
+            if len(parts) == 2:
+                options = ("on", "off", "style", "location")
+            elif len(parts) == 3 and parts[2].lower() == "style":
+                options = COORD_STYLES
+            elif len(parts) == 3 and parts[2].lower() == "location":
+                options = COORD_LOCATIONS
+            else:
+                options = ()
+            return [s for s in options if s.startswith(text)]
         return []
 
 FEATURE = BattleMapFeature()

@@ -3,7 +3,11 @@ battlemap_view.py — The battlemap display.
 
 One canvas, drawn in tagged layers so each can be cleared independently:
 
-    backdrop  →  grid   (grid is always raised to the top)
+    backdrop  →  grid  →  coords      (bottom to top; _restack() enforces it)
+
+Only the backdrop is expensive to redraw (see _draw_backdrop), so the grid
+and coords layers are redrawn independently and never force a backdrop
+redraw.
 
 Mainloop thread only, like every view.
 """
@@ -16,19 +20,25 @@ from typing import Callable, Optional, Tuple
 from PIL import Image, ImageTk
 
 from ..styling import *
-from ..model.grid import GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, cell_px, grid_line_positions
+from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, cell_px,
+                          coord_labels, grid_line_positions, label_font_px)
 
 from ....core.paths import IMAGES_DIR
 
 BACKDROP_TAG = "backdrop"
 GRID_TAG = "grid"
+COORDS_TAG = "coords"
+
+# Tk canvases have no transparency, so labels get a dark offset shadow to
+# stay readable on any backdrop.
+LABEL_SHADOW_COLOR = "black"
 
 # Returns the current pixels per inch, or None if it cannot be determined.
 PpiProvider = Callable[[], Optional[float]]
 
 
 class BattleMapView(tk.Frame):
-    """Displays the battlemap backdrop with an optional grid on top."""
+    """Displays the battlemap backdrop with optional grid and coordinates."""
 
     def __init__(self, parent: tk.Widget, grid_settings: GridSettings,
                  ppi_provider: PpiProvider):
@@ -45,24 +55,30 @@ class BattleMapView(tk.Frame):
         self._backdrop_key: Optional[tuple] = None
 
         self._grid_settings = grid_settings
-        self._grid_color = self._valid_color(grid_settings.color)
+        self._grid_color = self._valid_color(
+            grid_settings.color, "grid_color", DEFAULT_GRID_COLOR)
+        self._label_color = self._valid_color(
+            grid_settings.label_color, "coords_color", self._grid_color)
         self._ppi_provider = ppi_provider
-        # Per-view presentation: each view decides whether it draws the grid.
-        # The grid *scale* is shared model state and arrives in the snapshot.
+        # Per-view presentation: each view decides whether it draws the grid
+        # and the coordinates, and where. The grid *scale* and the coordinate
+        # *style* are shared model state and arrive in the snapshot.
         self._show_grid = False
+        self._show_coords = False
+        self._coords_location = grid_settings.coords_location
         self._grid_scale_pct = 100.0
+        self._coords_style = grid_settings.coords_style
 
         self.canvas.bind("<Configure>", lambda e: self.rescale((e.width, e.height)))
 
-    def _valid_color(self, color: str) -> str:
+    def _valid_color(self, color: str, key: str, fallback: str) -> str:
         """Tk is the authority on colour names; fall back if it rejects one."""
         try:
             self.canvas.winfo_rgb(color)
             return color
         except tk.TclError:
-            print(f"[!] battlemap: unknown grid_color {color!r}; "
-                  f"using {DEFAULT_GRID_COLOR}.")
-            return DEFAULT_GRID_COLOR
+            print(f"[!] battlemap: unknown {key} {color!r}; using {fallback}.")
+            return fallback
 
     # ── Loading ───────────────────────────────────────────────────────────
 
@@ -92,6 +108,7 @@ class BattleMapView(tk.Frame):
     def render(self, snapshot: dict) -> None:
         """Render from a feature snapshot. Loads the image if it changed."""
         self._grid_scale_pct = snapshot.get("grid_scale_pct", 100.0)
+        self._coords_style = snapshot.get("coords_style", self._coords_style)
 
         filename = snapshot.get("bgimage")
         if filename != self._filename:
@@ -111,6 +128,17 @@ class BattleMapView(tk.Frame):
 
         self._draw_backdrop(width, height)
         self._draw_grid(width, height)
+        self._draw_coords(width, height)
+
+    def _restack(self) -> None:
+        """Enforce the layer order: backdrop → grid → coords (bottom to top).
+
+        Each draw creates items on top of everything, so every layer draw
+        calls this. Raising a missing tag is a safe no-op.
+        """
+        self.canvas.tag_lower(BACKDROP_TAG)
+        self.canvas.tag_raise(GRID_TAG)
+        self.canvas.tag_raise(COORDS_TAG)
 
     def _draw_backdrop(self, width: int, height: int) -> None:
         key = (self._filename, width, height)
@@ -131,7 +159,7 @@ class BattleMapView(tk.Frame):
         self._photo = ImageTk.PhotoImage(img)
         del img     # the PhotoImage holds its own copy
         self.canvas.create_image(0, 0, image=self._photo, anchor="nw", tags=BACKDROP_TAG)
-        self.canvas.tag_lower(BACKDROP_TAG)     # bottom layer, whatever exists
+        self._restack()
 
     # ── Grid ──────────────────────────────────────────────────────────────
 
@@ -165,5 +193,59 @@ class BattleMapView(tk.Frame):
             self.canvas.create_line(x, 0, x, height, **line)
         for y in grid_line_positions(height, cell):
             self.canvas.create_line(0, y, width, y, **line)
-        # Always on top of whatever else is on the canvas.
-        self.canvas.tag_raise(GRID_TAG)
+        self._restack()
+
+    # ── Coordinates ───────────────────────────────────────────────────────
+
+    @property
+    def show_coords(self) -> bool:
+        return self._show_coords
+
+    @property
+    def coords_location(self) -> str:
+        return self._coords_location
+
+    def set_show_coords(self, on: bool) -> None:
+        """Show or hide this view's coordinates. Redraws only that layer."""
+        self._show_coords = on
+        self._draw_coords(self.canvas.winfo_width(), self.canvas.winfo_height())
+
+    def set_coords_location(self, location: str) -> None:
+        """"sides" or "cells". Redraws only the coordinates layer."""
+        self._coords_location = location
+        self._draw_coords(self.canvas.winfo_width(), self.canvas.winfo_height())
+
+    def coords_font_px(self) -> Optional[int]:
+        """Label font size at the current cell size, or None if too small."""
+        cell = self.current_cell_px()
+        if cell is None or cell < MIN_CELL_PX:
+            return None
+        return label_font_px(cell, self._coords_location)
+
+    def _draw_coords(self, width: int, height: int) -> None:
+        self.canvas.delete(COORDS_TAG)
+        if not self._show_coords or width <= 1 or height <= 1:
+            return
+        size = self.coords_font_px()
+        if size is None:
+            return
+        cell = self.current_cell_px()
+
+        # Negative size = pixels, not points: exact on the DPI-aware TV and
+        # proportional to the cell whatever the display scaling.
+        font = (FONT_FAMILY, -size, "bold")
+        offset = max(1, size // 12)
+        for label in coord_labels(width, height, cell,
+                                  self._coords_location, self._coords_style):
+            shadow = self.canvas.create_text(
+                label.x + offset, label.y + offset, text=label.text,
+                anchor=label.anchor, font=font, fill=LABEL_SHADOW_COLOR,
+                tags=COORDS_TAG)
+            text = self.canvas.create_text(
+                label.x, label.y, text=label.text, anchor=label.anchor,
+                font=font, fill=self._label_color, tags=COORDS_TAG)
+            # Partial edge cells: drop a label Tk says would be clipped.
+            x1, y1, x2, y2 = self.canvas.bbox(text)
+            if x2 > width or y2 > height:
+                self.canvas.delete(shadow, text)
+        self._restack()
