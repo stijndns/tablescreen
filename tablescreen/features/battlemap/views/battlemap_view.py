@@ -1,24 +1,37 @@
 """
 battlemap_view.py — The battlemap display.
+
+One canvas, drawn in tagged layers so each can be cleared independently:
+
+    backdrop  →  grid   (grid is always raised to the top)
+
+Mainloop thread only, like every view.
 """
 
 from __future__ import annotations
 
 import tkinter as tk
-from typing import Optional
+from typing import Callable, Optional, Tuple
 
 from PIL import Image, ImageTk
 
 from ..styling import *
-
-from typing import Tuple
+from ..model.grid import GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, cell_px, grid_line_positions
 
 from ....core.paths import IMAGES_DIR
 
-class BattleMapView(tk.Frame):
-    """Displays one image, scaled to fit its frame while preserving aspect."""
+BACKDROP_TAG = "backdrop"
+GRID_TAG = "grid"
 
-    def __init__(self, parent: tk.Widget):
+# Returns the current pixels per inch, or None if it cannot be determined.
+PpiProvider = Callable[[], Optional[float]]
+
+
+class BattleMapView(tk.Frame):
+    """Displays the battlemap backdrop with an optional grid on top."""
+
+    def __init__(self, parent: tk.Widget, grid_settings: GridSettings,
+                 ppi_provider: PpiProvider):
         super().__init__(parent, bg=PALETTE["bg"])
         self.canvas = tk.Canvas(self, bg=PALETTE["surface"], bd=0, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
@@ -27,9 +40,25 @@ class BattleMapView(tk.Frame):
         self._photo: Optional[ImageTk.PhotoImage] = None
         self._filename: Optional[str] = None
 
-        self.grid = False
+        self._grid_settings = grid_settings
+        self._grid_color = self._valid_color(grid_settings.color)
+        self._ppi_provider = ppi_provider
+        # Per-view presentation: each view decides whether it draws the grid.
+        # The grid *scale* is shared model state and arrives in the snapshot.
+        self._show_grid = False
+        self._grid_scale_pct = 100.0
 
         self.canvas.bind("<Configure>", lambda e: self.rescale((e.width, e.height)))
+
+    def _valid_color(self, color: str) -> str:
+        """Tk is the authority on colour names; fall back if it rejects one."""
+        try:
+            self.canvas.winfo_rgb(color)
+            return color
+        except tk.TclError:
+            print(f"[!] battlemap: unknown grid_color {color!r}; "
+                  f"using {DEFAULT_GRID_COLOR}.")
+            return DEFAULT_GRID_COLOR
 
     # ── Loading ───────────────────────────────────────────────────────────
 
@@ -58,41 +87,67 @@ class BattleMapView(tk.Frame):
 
     def render(self, snapshot: dict) -> None:
         """Render from a feature snapshot. Loads the image if it changed."""
+        self._grid_scale_pct = snapshot.get("grid_scale_pct", 100.0)
+
         filename = snapshot.get("bgimage")
         if filename != self._filename:
-            if not self.load(filename):
-                return
+            self.load(filename)     # on failure keep drawing the grid anyway
         self.rescale()
 
     def rescale(self, new_size: Tuple[int, int] | None = None) -> None:
-        """Redraw the current image letterboxed into the frame."""
-        if self._original is None:
-            self.canvas.delete("backdrop")
-            return
-
+        """Redraw every layer at the canvas's current (or given) size."""
         if new_size is not None:
             width, height = new_size
         else:
             width = self.canvas.winfo_width()
             height = self.canvas.winfo_height()
-            # During construction the widget reports 1x1; nothing useful to draw.
+        # During construction the widget reports 1x1; nothing useful to draw.
         if width <= 1 or height <= 1:
             return
 
-        img = self._original.copy()
-        img = img.resize((width, height), Image.LANCZOS)
+        self._draw_backdrop(width, height)
+        self._draw_grid(width, height)
+
+    def _draw_backdrop(self, width: int, height: int) -> None:
+        self.canvas.delete(BACKDROP_TAG)
+        if self._original is None:
+            self._photo = None
+            return
+        img = self._original.resize((width, height), Image.LANCZOS)
         self._photo = ImageTk.PhotoImage(img)
-        self.canvas.delete("backdrop")
-        self.canvas.create_image(0, 0, image=self._photo, anchor="nw", tags="backdrop")
+        self.canvas.create_image(0, 0, image=self._photo, anchor="nw", tags=BACKDROP_TAG)
 
-        if self.grid:
-            self.draw_grid()
+    # ── Grid ──────────────────────────────────────────────────────────────
 
-#    def draw_grid(self):
-        
+    @property
+    def show_grid(self) -> bool:
+        return self._show_grid
 
-    # def clear(self) -> None:
-    #     self._original = None
-    #     self._photo = None
-    #     self._filename = None
-    #     self.label.config(image="")
+    def set_show_grid(self, on: bool) -> None:
+        """Show or hide this view's grid. Redraws only the grid layer."""
+        self._show_grid = on
+        self._draw_grid(self.canvas.winfo_width(), self.canvas.winfo_height())
+
+    def current_cell_px(self) -> Optional[float]:
+        """Cell size in pixels at the current scale, or None if unknown."""
+        ppi = self._ppi_provider()
+        if ppi is None:
+            return None
+        return cell_px(ppi, self._grid_settings.cell_size_in, self._grid_scale_pct)
+
+    def _draw_grid(self, width: int, height: int) -> None:
+        self.canvas.delete(GRID_TAG)
+        if not self._show_grid or width <= 1 or height <= 1:
+            return
+        cell = self.current_cell_px()
+        if cell is None or cell < MIN_CELL_PX:
+            return
+
+        line = {"fill": self._grid_color, "width": self._grid_settings.width,
+                "tags": GRID_TAG}
+        for x in grid_line_positions(width, cell):
+            self.canvas.create_line(x, 0, x, height, **line)
+        for y in grid_line_positions(height, cell):
+            self.canvas.create_line(0, y, width, y, **line)
+        # Always on top of whatever else is on the canvas.
+        self.canvas.tag_raise(GRID_TAG)

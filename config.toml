@@ -16,6 +16,15 @@ window = "mainscreen"
 
 [features.battlemap]
 window = "battlemap"
+# Grid calibration. Pixels per inch are derived from the physical diagonal
+# and the resolution of the monitor the window is on. If the grid comes out
+# the wrong size (e.g. under Windows display scaling), measure it and set
+# pixels_per_inch to override the calculation.
+screen_diagonal_in = 50     # physical diagonal of the table TV, in inches
+cell_size_in = 1.0          # one grid cell, in inches
+# pixels_per_inch = 88.1    # optional override
+grid_color = "#ffffff"
+grid_width = 1
 
 [windows]
 mainscreen = "800x600"

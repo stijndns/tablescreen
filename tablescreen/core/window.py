@@ -157,14 +157,10 @@ class Window:
         """
         self.restore()
 
-        x = self.toplevel.winfo_x()
-        y = self.toplevel.winfo_y()
-
-        if get_monitors is not None:
-            for m in get_monitors():
-                if m.x <= x < m.x + m.width and m.y <= y < m.y + m.height:
-                    self._apply_fullscreen(m)
-                    return m
+        m = self.monitor()
+        if m is not None:
+            self._apply_fullscreen(m)
+            return m
 
         # No monitor matched (or screeninfo unavailable): fall back to Tk's
         # own fullscreen on the current screen.
@@ -174,6 +170,27 @@ class Window:
             pass
         self._is_fullscreen = True
         self._notify_geometry_change()
+        return None
+
+    def monitor(self):
+        """The screeninfo monitor containing the window's top-left corner.
+
+        None when screeninfo is unavailable, fails, or no monitor matches.
+        Note screeninfo reports physical pixels; with OS display scaling Tk
+        may be working in logical pixels, so callers comparing the two should
+        prefer Tk's own measurements where they can.
+        """
+        if get_monitors is None:
+            return None
+        x = self.toplevel.winfo_x()
+        y = self.toplevel.winfo_y()
+        try:
+            monitors = get_monitors()
+        except Exception:
+            return None
+        for m in monitors:
+            if m.x <= x < m.x + m.width and m.y <= y < m.y + m.height:
+                return m
         return None
 
     def _apply_fullscreen(self, monitor) -> None:
