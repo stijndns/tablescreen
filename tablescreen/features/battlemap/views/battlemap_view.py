@@ -39,6 +39,10 @@ class BattleMapView(tk.Frame):
         self._original: Optional[Image.Image] = None
         self._photo: Optional[ImageTk.PhotoImage] = None
         self._filename: Optional[str] = None
+        # (filename, width, height) of the backdrop currently on the canvas.
+        # Rescaling a 4K image costs ~100 MB transiently, so skip it when
+        # only another layer (e.g. the grid) changed.
+        self._backdrop_key: Optional[tuple] = None
 
         self._grid_settings = grid_settings
         self._grid_color = self._valid_color(grid_settings.color)
@@ -109,13 +113,25 @@ class BattleMapView(tk.Frame):
         self._draw_grid(width, height)
 
     def _draw_backdrop(self, width: int, height: int) -> None:
+        key = (self._filename, width, height)
+        if key == self._backdrop_key:
+            return      # same image at the same size is already drawn
+        self._backdrop_key = key
+
+        # Free the old image before building the new one, so two full-size
+        # copies never coexist. Delete the canvas item first: Tk keeps the
+        # image data alive while an item still references it. No flicker —
+        # Tk only repaints at idle, after the new item exists.
         self.canvas.delete(BACKDROP_TAG)
+        self._photo = None
         if self._original is None:
-            self._photo = None
             return
+
         img = self._original.resize((width, height), Image.LANCZOS)
         self._photo = ImageTk.PhotoImage(img)
+        del img     # the PhotoImage holds its own copy
         self.canvas.create_image(0, 0, image=self._photo, anchor="nw", tags=BACKDROP_TAG)
+        self.canvas.tag_lower(BACKDROP_TAG)     # bottom layer, whatever exists
 
     # ── Grid ──────────────────────────────────────────────────────────────
 
