@@ -38,6 +38,22 @@ DEFAULT_GEOMETRY = "800x600"
 DEFAULT_BG = "black"
 
 
+def monitor_at(monitors, x: int, y: int):
+    """The monitor containing point (x, y), else the one nearest to it.
+
+    ``monitors`` are screeninfo Monitor objects (anything with x, y, width,
+    height). Returns None only when the list is empty, so a point in the gap
+    of an uneven multi-monitor layout still resolves to a real monitor.
+    """
+    def distance_sq(m) -> int:
+        # 0 when the point is inside the monitor's rectangle.
+        dx = max(m.x - x, 0, x - (m.x + m.width - 1))
+        dy = max(m.y - y, 0, y - (m.y + m.height - 1))
+        return dx * dx + dy * dy
+
+    return min(monitors, key=distance_sq, default=None)
+
+
 class ContentSlot:
     """One feature's content inside a window.
 
@@ -173,25 +189,26 @@ class Window:
         return None
 
     def monitor(self):
-        """The screeninfo monitor containing the window's top-left corner.
+        """The screeninfo monitor the window is on, judged by its centre.
 
-        None when screeninfo is unavailable, fails, or no monitor matches.
-        Note screeninfo reports physical pixels; with OS display scaling Tk
-        may be working in logical pixels, so callers comparing the two should
-        prefer Tk's own measurements where they can.
+        Falls back to the monitor nearest the centre if none contains it.
+        None only when screeninfo is unavailable, fails, or finds nothing.
+        screeninfo and Tk both measure in physical pixels because the app
+        is made DPI aware at startup (see app.enable_dpi_awareness).
         """
         if get_monitors is None:
             return None
-        x = self.toplevel.winfo_x()
-        y = self.toplevel.winfo_y()
+        top = self.toplevel
+        # Centre, not top-left: a maximised Windows window sits at about
+        # x=-8 (invisible borders), which is on no monitor, and a window
+        # dragged mostly onto the TV still has its corner on the laptop.
+        cx = top.winfo_x() + top.winfo_width() // 2
+        cy = top.winfo_y() + top.winfo_height() // 2
         try:
             monitors = get_monitors()
         except Exception:
             return None
-        for m in monitors:
-            if m.x <= x < m.x + m.width and m.y <= y < m.y + m.height:
-                return m
-        return None
+        return monitor_at(monitors, cx, cy)
 
     def _apply_fullscreen(self, monitor) -> None:
         if CURRENT_OS == "Windows":

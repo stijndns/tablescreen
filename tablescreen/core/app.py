@@ -21,6 +21,7 @@ nothing about a feature changes.
 from __future__ import annotations
 
 import importlib
+import platform
 import re
 import threading
 import tkinter as tk
@@ -102,6 +103,36 @@ def load_feature(name: str) -> Optional[Feature]:
         return None
     return feature
 
+# ── Display ─────────────────────────────────────────────────────────────
+
+def enable_dpi_awareness() -> None:
+    """Make the process per-monitor DPI aware on Windows. Call before tk.Tk().
+
+    screeninfo's Windows backend calls SetProcessDpiAwareness(2) the first
+    time monitors are queried (fullscreen, grid calibration). If the process
+    starts DPI-unaware, that flips it mid-session: Windows stops enlarging
+    the app for display scaling, so every window visibly shrinks and
+    `restore` reproduces the smaller size. Setting the same mode up front
+    keeps it constant for the whole session, makes Tk and screeninfo measure
+    in the same physical pixels, and renders sharply on the 4K TV.
+
+    Consequence: [windows] sizes in config are physical pixels.
+    """
+    if platform.system() != "Windows":
+        return
+    import ctypes
+    try:
+        # 2 = PROCESS_PER_MONITOR_DPI_AWARE, the mode screeninfo uses.
+        # Returns an HRESULT rather than raising; a failure (e.g. already
+        # set) leaves whatever mode the process has, which is acceptable.
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except (AttributeError, OSError):
+        # shcore is missing before Windows 8.1: system-DPI-aware fallback.
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except (AttributeError, OSError):
+            pass
+
 # ── The application ─────────────────────────────────────────────────────
 
 class Application:
@@ -110,6 +141,7 @@ class Application:
     def __init__(self, config: Optional[dict[str, Any]] = None):
         self.config = config if config is not None else load_config()
 
+        enable_dpi_awareness()      # must precede the Tk root; see docstring
         self.root = tk.Tk()
         self.root.withdraw()
 
