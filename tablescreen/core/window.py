@@ -228,18 +228,25 @@ class WindowService:
     window internals.
     """
 
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, geometries: Optional[dict[str, str]] = None):
         self._root = root
         self._windows: dict[str, Window] = {}
+        # Per-window default sizes from config's [windows] table.
+        self._geometries: dict[str, str] = dict(geometries or {})
 
-    def get_window(self, name: str, geometry: str = DEFAULT_GEOMETRY) -> Window:
+    def get_window(self, name: str, geometry: Optional[str] = None) -> Window:
         """Get the named window, creating it on first request.
 
         On-demand creation is what lets a window named at runtime (e.g. a
         mirror on a DM screen) work exactly like one declared in config.
+
+        Size on creation: an explicit ``geometry`` wins, then the window's
+        entry in config, then DEFAULT_GEOMETRY. An existing window is
+        returned unchanged.
         """
         if name not in self._windows:
-            self._windows[name] = Window(self._root, name, geometry)
+            size = geometry or self._geometries.get(name, DEFAULT_GEOMETRY)
+            self._windows[name] = Window(self._root, name, size)
         return self._windows[name]
 
     def content_slot(self, window_name: str, slot_id: str) -> ContentSlot:

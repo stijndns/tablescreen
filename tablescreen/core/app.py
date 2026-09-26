@@ -21,6 +21,7 @@ nothing about a feature changes.
 from __future__ import annotations
 
 import importlib
+import re
 import threading
 import tkinter as tk
 import tomllib
@@ -59,6 +60,26 @@ def feature_config(config: dict[str, Any], name: str) -> dict[str, Any]:
     section = config.get("features", {}).get(name, {})
     return dict(section) if isinstance(section, dict) else {}
 
+_GEOMETRY_RE = re.compile(r"\d+x\d+(?:[+-]\d+[+-]\d+)?")
+
+def window_geometries(config: dict[str, Any]) -> dict[str, str]:
+    """The [windows] table as {window name: Tk geometry string}.
+
+    Invalid entries are skipped with a warning, so a typo falls back to the
+    default size rather than stopping a feature from building its window.
+    """
+    section = config.get("windows", {})
+    if not isinstance(section, dict):
+        return {}
+    geometries: dict[str, str] = {}
+    for name, value in section.items():
+        if isinstance(value, str) and _GEOMETRY_RE.fullmatch(value.strip()):
+            geometries[name] = value.strip()
+        else:
+            print(f"[!] Invalid size for window '{name}': {value!r} "
+                  f"(expected e.g. \"1200x900\"); using the default.")
+    return geometries
+
 
 # ── Feature loading ─────────────────────────────────────────────────────
 
@@ -93,7 +114,7 @@ class Application:
         self.root.withdraw()
 
         self.bus = MessageBus(self.root)
-        self.windows = WindowService(self.root)
+        self.windows = WindowService(self.root, window_geometries(self.config))
         self.shell = Shell(self.bus, intro_lines=self._intro_lines())
         self.features: dict[str, Feature] = {}
         self._shutting_down = False
