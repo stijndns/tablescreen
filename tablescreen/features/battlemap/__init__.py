@@ -70,7 +70,7 @@ class BattleMapFeature(FeatureBase):
         rest = parts[1:]
 
         if sub == "show":
-            filename = rest[0]
+            filename = rest[0] if rest else ""
             if not filename:
                 print("Usage: map show <file>")
                 return
@@ -126,18 +126,5 @@ class BattleMapFeature(FeatureBase):
                                         CURRENT_OS, "image")
             return []
         return []
-
-    @staticmethod
-    def _clean(text: str, line: str) -> str:
-        """On Linux, readline hands back only the last token; recover the
-        full partial path so directory navigation completes correctly."""
-        if CURRENT_OS == "Linux" and len(line.split()) > 1:
-            return line.split()[1]
-        return text
-
-    def _complete_show(self, text, line, begidx, endidx) -> list[str]:
-        return tab_completion(self._clean(text, line),
-                              list(Image.registered_extensions()),
-                              CURRENT_OS, "image")
 
 FEATURE = BattleMapFeature()
