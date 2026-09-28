@@ -12,11 +12,12 @@ from PIL import Image
 
 from ...core.completion import get_arg_parts, tab_completion
 from ...core.feature import FeatureBase, ShellServices
-from .model.battlemap_state import BattleMapState
+from ...core.paths import IMAGES_DIR
+from .model.battlemap_state import BattleMapState, Sprite
 from .model.grid import (COORD_LOCATIONS, COORD_STYLES, GridSettings,
                          MAX_SCALE_PCT, MIN_CELL_PX, MIN_LABEL_FONT_PX,
-                         MIN_SCALE_PCT, cell_px, label_font_px,
-                         pixels_per_inch)
+                         MIN_SCALE_PCT, cell_label, cell_px, label_font_px,
+                         parse_cell, pixels_per_inch)
 from .video import VIDEO_EXTENSIONS
 from .views.battlemap_view import BattleMapView
 
@@ -39,7 +40,24 @@ Battlemap commands:
                                     — row first: 5,8 (numbers) or E8 (letters)
     map coords location sides | cells
                                     — along the top/left edges, or in every cell
+    map sprite add <file> <cell> [as <name>]
+                                    — image fitted in a cell (5,8 or E8);
+                                      default names sprite1, sprite2, ...
+    map sprite remove <name>        — remove a sprite
+    map sprite list                 — all sprites with their cells
 """
+
+
+def format_sprites(sprites: tuple[Sprite, ...], style: str) -> str:
+    """The `map sprite list` table, cells in the active coords style."""
+    if not sprites:
+        return "No sprites."
+    rows = [(s.name, cell_label(s.row, s.col, style), s.file) for s in sprites]
+    w_name = max(len(r[0]) for r in rows)
+    w_cell = max(len(r[1]) for r in rows)
+    lines = [f"Sprites ({len(rows)}):"]
+    lines += [f"  {n:<{w_name}}  {c:<{w_cell}}  {f}" for n, c, f in rows]
+    return "\n".join(lines)
 
 class BattleMapFeature(FeatureBase):
     """Show battlemap with (optionally visible) grid on a window."""
@@ -116,6 +134,8 @@ class BattleMapFeature(FeatureBase):
             self._cmd_grid(rest)
         elif sub == "coords":
             self._cmd_coords(rest)
+        elif sub == "sprite":
+            self._cmd_sprite(rest)
         else:
             print(f"[!] Unknown map sub-command '{sub}'. Type 'map help'.")
 
@@ -172,6 +192,53 @@ class BattleMapFeature(FeatureBase):
                            (action, value, self.state.coords_style,
                             self.state.grid_scale_pct))
 
+    def _cmd_sprite(self, rest: list[str]) -> None:
+        action = rest[0].lower() if rest else ""
+        args = rest[1:]
+
+        if action == "add":
+            self._sprite_add(args)
+        elif action == "remove":
+            if len(args) != 1:
+                print("Usage: map sprite remove <name>")
+                return
+            sprite = self.state.remove_sprite(args[0])
+            if sprite is None:
+                print(f"[!] No sprite named '{args[0]}'. See 'map sprite list'.")
+                return
+            self.services.send(self.name, "render")
+            cell = cell_label(sprite.row, sprite.col, self.state.coords_style)
+            print(f"[+] Removed sprite '{sprite.name}' from {cell}.")
+        elif action == "list":
+            print(format_sprites(self.state.sprites, self.state.coords_style))
+        else:
+            print("Usage: map sprite add <file> <cell> [as <name>] | "
+                  "remove <name> | list")
+
+    def _sprite_add(self, args: list[str]) -> None:
+        if len(args) == 4 and args[2].lower() == "as":
+            file, cell_text, name = args[0], args[1], args[3]
+        elif len(args) == 2:
+            (file, cell_text), name = args, None
+        else:
+            print("Usage: map sprite add <file> <cell> [as <name>]")
+            return
+
+        cell = parse_cell(cell_text)
+        if cell is None:
+            print(f"[!] Invalid cell '{cell_text}'. Use e.g. 5,8 or E8.")
+            return
+        if not (IMAGES_DIR / file).is_file():
+            print(f"[!] File not found: {IMAGES_DIR / file}")
+            return
+        try:
+            sprite = self.state.add_sprite(file, *cell, name)
+        except ValueError as exc:
+            print(f"[!] {exc}")
+            return
+        self.services.send(self.name, "sprite_added",
+                           (sprite, self.state.coords_style, self.state.grid_scale_pct))
+
     @staticmethod
     def _parse_percent(text: str) -> Optional[float]:
         """'110' or '110%' → 110.0; None if missing, invalid or out of range."""
@@ -220,6 +287,11 @@ class BattleMapFeature(FeatureBase):
             elif action == "location":
                 view.set_coords_location(value)
             print(self._coords_report(action, view, style, scale))
+        elif message.command == "sprite_added":
+            sprite, style, scale = message.arg
+            self.slot.show()
+            self.refresh()
+            print(self._sprite_report(sprite, style, scale))
 
     # ── Grid calibration (mainloop thread — reads Tk geometry) ────────────
 
@@ -296,11 +368,24 @@ class BattleMapFeature(FeatureBase):
         return report
 
 
+    def _sprite_report(self, sprite: Sprite, style: str, scale: float) -> str:
+        cell = cell_label(sprite.row, sprite.col, style)
+        report = f"[+] Added sprite '{sprite.name}': {sprite.file} at {cell}."
+        ppi, _ = self._calibration()
+        if ppi is not None:
+            size = cell_px(ppi, self.grid_settings.cell_size_in, scale)
+            canvas = self.views[0].canvas
+            if ((sprite.col - 1) * size >= canvas.winfo_width()
+                    or (sprite.row - 1) * size >= canvas.winfo_height()):
+                report += f"\n[!] {cell} is outside the visible grid; not drawn."
+        return report
+
     # ── Tab completion ────────────────────────────────────────────────────
 
     def complete_battlemap(self, text, line, begidx, endidx) -> list[str]:
         parts = get_arg_parts(line[:begidx])
-        top_subs = ["show", "bgclear", "fullscreen", "restore", "grid", "coords"]
+        top_subs = ["show", "bgclear", "fullscreen", "restore", "grid", "coords",
+                    "sprite"]
 
         if len(parts) == 1:
             return [s for s in top_subs if s.startswith(text)]
@@ -326,6 +411,19 @@ class BattleMapFeature(FeatureBase):
             else:
                 options = ()
             return [s for s in options if s.startswith(text)]
+        if sub == "sprite":
+            if len(parts) == 2:
+                return [s for s in ("add", "remove", "list") if s.startswith(text)]
+            action = parts[2].lower()
+            if action == "add" and len(parts) == 3:
+                clean = line.split()[-1] if not line.endswith(" ") else ""
+                return tab_completion(clean, list(Image.registered_extensions()),
+                                      CURRENT_OS, "image")
+            if action == "add" and len(parts) == 5:
+                return ["as"] if "as".startswith(text.lower()) else []
+            if action == "remove" and len(parts) == 3:
+                return [s.name for s in self.state.sprites
+                        if s.name.lower().startswith(text.lower())]
         return []
 
 FEATURE = BattleMapFeature()

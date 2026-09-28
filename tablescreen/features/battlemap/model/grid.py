@@ -8,6 +8,7 @@ so fractional cells (~88.1 px) don't drift across the TV.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -185,6 +186,26 @@ def cell_label(row: int, col: int, style: str) -> str:
     """Full coordinate, row first: "5,8" (numbers) or "E8" (letters)."""
     sep = "," if style == "numbers" else ""
     return f"{row_label(row, style)}{sep}{col_label(col)}"
+
+
+_CELL_NUMBERS = re.compile(r"(\d+),(\d+)")
+_CELL_LETTERS = re.compile(r"([A-Za-z]+)(\d+)")
+
+
+def parse_cell(text: str) -> Optional[tuple[int, int]]:
+    """(row, col) from "5,8" or "E8" (either style, letters any case), else None.
+    Both notations are row first, so they never disagree about a cell."""
+    text = text.strip()
+    if m := _CELL_NUMBERS.fullmatch(text):
+        row, col = int(m[1]), int(m[2])
+    elif m := _CELL_LETTERS.fullmatch(text):
+        row = 0
+        for ch in m[1].upper():             # inverse of row_label
+            row = row * 26 + ord(ch) - ord("A") + 1
+        col = int(m[2])
+    else:
+        return None
+    return (row, col) if row >= 1 and col >= 1 else None
 
 
 def label_font_px(cell: float, location: str) -> Optional[int]:

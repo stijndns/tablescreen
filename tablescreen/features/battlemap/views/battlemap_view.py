@@ -1,7 +1,7 @@
 """
 battlemap_view.py — The battlemap display.
 
-One canvas in tagged layers: backdrop → grid → coords (bottom to top).
+One canvas in tagged layers: backdrop → sprites → grid → coords (bottom to top).
 The backdrop is a static image or a streamed video (see animation.py); it is
 expensive, so other layers never force it to redraw. Mainloop thread only.
 """
@@ -15,13 +15,15 @@ from PIL import Image, ImageTk
 
 from ..styling import *
 from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, cell_px,
-                          coord_labels, grid_line_positions, label_font_px)
+                          cell_to_pixels, coord_labels, grid_line_positions,
+                          label_font_px)
 from ..video import VideoStream, is_video, oversize_warning, probe
 from .animation import AnimationClock, VideoBackdrop
 
 from ....core.paths import IMAGES_DIR
 
 BACKDROP_TAG = "backdrop"
+SPRITES_TAG = "sprites"
 GRID_TAG = "grid"
 COORDS_TAG = "coords"
 
@@ -60,6 +62,10 @@ class BattleMapView(tk.Frame):
         self._coords_location = grid_settings.coords_location
         self._grid_scale_pct = 100.0
         self._coords_style = grid_settings.coords_style
+
+        self._sprites: tuple = ()           # from the snapshot
+        self._sprite_sources: dict[str, Optional[Image.Image]] = {}  # None = failed
+        self._sprite_photos: dict[tuple, ImageTk.PhotoImage] = {}    # (file, w, h)
 
         self._clock = AnimationClock(self.canvas)
         self._video_path = None             # set when the backdrop is a video
@@ -139,6 +145,7 @@ class BattleMapView(tk.Frame):
         """Render from a feature snapshot. Loads the image if it changed."""
         self._grid_scale_pct = snapshot.get("grid_scale_pct", 100.0)
         self._coords_style = snapshot.get("coords_style", self._coords_style)
+        self._sprites = snapshot.get("sprites", ())
 
         filename = snapshot.get("bgimage")
         if filename != self._filename:
@@ -157,12 +164,14 @@ class BattleMapView(tk.Frame):
             return
 
         self._draw_backdrop(width, height)
+        self._draw_sprites(width, height)
         self._draw_grid(width, height)
         self._draw_coords(width, height)
 
     def _restack(self) -> None:
-        """Enforce backdrop → grid → coords; new items always land on top."""
+        """Enforce backdrop → sprites → grid → coords; new items land on top."""
         self.canvas.tag_lower(BACKDROP_TAG)
+        self.canvas.tag_raise(SPRITES_TAG)
         self.canvas.tag_raise(GRID_TAG)
         self.canvas.tag_raise(COORDS_TAG)
 
@@ -195,6 +204,46 @@ class BattleMapView(tk.Frame):
         del img     # the PhotoImage holds its own copy
         self.canvas.create_image(0, 0, image=self._photo, anchor="nw", tags=BACKDROP_TAG)
         self._restack()
+
+    # ── Sprites ───────────────────────────────────────────────────────────
+
+    def _draw_sprites(self, width: int, height: int) -> None:
+        self.canvas.delete(SPRITES_TAG)
+        cell = self.current_cell_px()
+        if cell is None or cell < MIN_CELL_PX:
+            return
+
+        photos = {}         # only keep photos still in use at this cell size
+        for sprite in self._sprites:
+            x, y = cell_to_pixels(row=sprite.row, col=sprite.col, cell=cell)
+            if x >= width or y >= height:
+                continue                    # off the visible grid
+            source = self._sprite_source(sprite.file)
+            if source is None:
+                continue
+            scale = min(cell / source.width, cell / source.height)
+            size = (max(1, round(source.width * scale)),
+                    max(1, round(source.height * scale)))
+            key = (sprite.file, *size)
+            photo = photos.get(key) or self._sprite_photos.get(key)
+            if photo is None:
+                photo = ImageTk.PhotoImage(source.resize(size, Image.LANCZOS))
+            photos[key] = photo
+            self.canvas.create_image(x + cell / 2, y + cell / 2, image=photo,
+                                     anchor="center", tags=SPRITES_TAG)
+        self._sprite_photos = photos
+        self._restack()
+
+    def _sprite_source(self, file: str) -> Optional[Image.Image]:
+        """Decoded sprite image, loaded once per file (first frame for GIFs)."""
+        if file not in self._sprite_sources:
+            try:
+                with Image.open(IMAGES_DIR / file) as img:
+                    self._sprite_sources[file] = img.convert("RGBA")
+            except Exception as exc:
+                print(f"[!] Could not load sprite image {file}: {exc}")
+                self._sprite_sources[file] = None       # don't retry every draw
+        return self._sprite_sources[file]
 
     # ── Grid ──────────────────────────────────────────────────────────────
 
