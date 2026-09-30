@@ -18,7 +18,8 @@ from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, cell_px
                           cell_to_pixels, coord_labels, grid_line_positions,
                           label_font_px)
 from ..video import VideoStream, is_video, oversize_warning, probe
-from .animation import AnimationClock, VideoBackdrop
+from ..sprite_images import SpriteSource, fit_size, read_source, scaled_frames
+from .animation import AnimationClock, SpriteAnimation, VideoBackdrop
 
 from ....core.paths import IMAGES_DIR
 
@@ -64,8 +65,10 @@ class BattleMapView(tk.Frame):
         self._coords_style = grid_settings.coords_style
 
         self._sprites: tuple = ()           # from the snapshot
-        self._sprite_sources: dict[str, Optional[Image.Image]] = {}  # None = failed
-        self._sprite_photos: dict[tuple, ImageTk.PhotoImage] = {}    # (file, w, h)
+        self._sprite_sources: dict[str, Optional[SpriteSource]] = {}   # None = failed
+        # Keyed by (file, w, h); only keys in use at the current cell size.
+        self._sprite_frames: dict[tuple, list[ImageTk.PhotoImage]] = {}
+        self._sprite_anims: dict[tuple, SpriteAnimation] = {}
 
         self._clock = AnimationClock(self.canvas)
         self._video_path = None             # set when the backdrop is a video
@@ -210,40 +213,64 @@ class BattleMapView(tk.Frame):
     def _draw_sprites(self, width: int, height: int) -> None:
         self.canvas.delete(SPRITES_TAG)
         cell = self.current_cell_px()
-        if cell is None or cell < MIN_CELL_PX:
-            return
+        frames: dict[tuple, list[ImageTk.PhotoImage]] = {}
+        anims: dict[tuple, SpriteAnimation] = {}
+        items: dict[tuple, list[int]] = {}
 
-        photos = {}         # only keep photos still in use at this cell size
-        for sprite in self._sprites:
+        for sprite in self._sprites if cell and cell >= MIN_CELL_PX else ():
             x, y = cell_to_pixels(row=sprite.row, col=sprite.col, cell=cell)
             if x >= width or y >= height:
                 continue                    # off the visible grid
             source = self._sprite_source(sprite.file)
             if source is None:
                 continue
-            scale = min(cell / source.width, cell / source.height)
-            size = (max(1, round(source.width * scale)),
-                    max(1, round(source.height * scale)))
-            key = (sprite.file, *size)
-            photo = photos.get(key) or self._sprite_photos.get(key)
-            if photo is None:
-                photo = ImageTk.PhotoImage(source.resize(size, Image.LANCZOS))
-            photos[key] = photo
-            self.canvas.create_image(x + cell / 2, y + cell / 2, image=photo,
-                                     anchor="center", tags=SPRITES_TAG)
-        self._sprite_photos = photos
+            key = (sprite.file, *fit_size(source.size, cell))
+            if key not in frames:
+                # Reuse frames and animations from the last draw where possible,
+                # so a redraw neither re-decodes nor restarts an animation.
+                loaded = self._sprite_frames.get(key) or self._load_frames(sprite.file, key[1:])
+                if not loaded:
+                    continue
+                frames[key] = loaded
+                if source.animated:
+                    anims[key] = self._sprite_anims.get(key) or SpriteAnimation(
+                        self.canvas, frames[key], list(source.durations),
+                        start=self._anim_start(sprite.file))
+            image = anims[key].current_frame() if key in anims else frames[key][0]
+            items.setdefault(key, []).append(self.canvas.create_image(
+                x + cell / 2, y + cell / 2, image=image, anchor="center", tags=SPRITES_TAG))
+
+        for key, anim in self._sprite_anims.items():
+            if key not in anims:
+                self._clock.remove(anim)
+        for key, anim in anims.items():
+            anim.set_items(items[key])
+            if key not in self._sprite_anims:
+                self._clock.add(anim)
+        self._sprite_frames, self._sprite_anims = frames, anims
         self._restack()
 
-    def _sprite_source(self, file: str) -> Optional[Image.Image]:
-        """Decoded sprite image, loaded once per file (first frame for GIFs)."""
+    def _anim_start(self, file: str) -> Optional[float]:
+        """Start time of this file's animation at the previous cell size, so a
+        grid resize doesn't restart it."""
+        return next((a.start for (f, *_), a in self._sprite_anims.items() if f == file), None)
+
+    def _sprite_source(self, file: str) -> Optional[SpriteSource]:
+        """Size and frame timing, read once per file."""
         if file not in self._sprite_sources:
             try:
-                with Image.open(IMAGES_DIR / file) as img:
-                    self._sprite_sources[file] = img.convert("RGBA")
+                self._sprite_sources[file] = read_source(IMAGES_DIR / file)
             except Exception as exc:
                 print(f"[!] Could not load sprite image {file}: {exc}")
                 self._sprite_sources[file] = None       # don't retry every draw
         return self._sprite_sources[file]
+
+    def _load_frames(self, file: str, size: tuple[int, int]) -> list[ImageTk.PhotoImage]:
+        try:
+            return [ImageTk.PhotoImage(f) for f in scaled_frames(IMAGES_DIR / file, size)]
+        except Exception as exc:
+            print(f"[!] Could not load sprite image {file}: {exc}")
+            return []
 
     # ── Grid ──────────────────────────────────────────────────────────────
 

@@ -374,9 +374,10 @@ class BattleMapFeature(FeatureBase):
         ppi, _ = self._calibration()
         if ppi is not None:
             size = cell_px(ppi, self.grid_settings.cell_size_in, scale)
-            canvas = self.views[0].canvas
-            if ((sprite.col - 1) * size >= canvas.winfo_width()
-                    or (sprite.row - 1) * size >= canvas.winfo_height()):
+            width, height = self.views[0].canvas.winfo_width(), self.views[0].canvas.winfo_height()
+            laid_out = width > 1 and height > 1     # 1x1 before the window maps
+            if laid_out and ((sprite.col - 1) * size >= width
+                             or (sprite.row - 1) * size >= height):
                 report += f"\n[!] {cell} is outside the visible grid; not drawn."
         return report
 

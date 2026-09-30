@@ -2,12 +2,14 @@
 animation.py — The mainloop side of animation. Mainloop thread only.
 
 AnimationClock is the single after() loop that drives everything animated
-on a canvas (the video backdrop now, sprites later), so animations do not
-run competing timers.
+on a canvas (video backdrop, animated sprites), so animations do not run
+competing timers.
 """
 
 from __future__ import annotations
 
+import bisect
+import itertools
 import math
 import time
 import tkinter as tk
@@ -67,6 +69,56 @@ class AnimationClock:
                 self._animations.remove(animation)
         if self._animations:
             self._schedule(min(wake) - time.monotonic())
+
+
+def frame_at(durations: list[float], elapsed: float) -> tuple[int, float]:
+    """Frame index at ``elapsed`` seconds into a looping animation, and the
+    seconds until the next frame starts. Derived from time, not counted per
+    tick, so a late tick skips ahead instead of drifting."""
+    total = sum(durations)
+    t = elapsed % total
+    ends = list(itertools.accumulate(durations))
+    # Tolerance for float sums: at t=0.3, frames of 0.1+0.2 must be over.
+    index = bisect.bisect_right(ends, t + 1e-6)
+    if index == len(ends):                  # a hair before the loop restarts
+        return 0, ends[0] + total - t
+    return index, ends[index] - t
+
+
+class SpriteAnimation:
+    """Cycles an animated sprite's frames on its canvas items.
+
+    One per (file, size): sprites sharing a file stay in sync and share the
+    frames. The view reassigns ``items`` on every sprite redraw, and passes
+    the old ``start`` on a resize, so neither restarts the animation.
+    """
+
+    def __init__(self, canvas: tk.Canvas, frames: list[ImageTk.PhotoImage],
+                 durations: list[float], start: Optional[float] = None):
+        self._canvas = canvas
+        self.frames = frames
+        self._durations = durations
+        self.start = time.monotonic() if start is None else start
+        self.items: list[int] = []
+        self._shown: Optional[int] = None
+
+    def tick(self, now: float) -> float:
+        if not self._canvas.winfo_viewable():
+            return now + HIDDEN_POLL_S
+        index, until_next = frame_at(self._durations, now - self.start)
+        if index != self._shown:
+            for item in self.items:
+                self._canvas.itemconfigure(item, image=self.frames[index])
+            self._shown = index
+        return now + until_next
+
+    def current_frame(self) -> ImageTk.PhotoImage:
+        """The frame to create new items with, so a redraw doesn't flash frame 0."""
+        return self.frames[frame_at(self._durations, time.monotonic() - self.start)[0]]
+
+    def set_items(self, items: list[int]) -> None:
+        self.items = items
+        self._shown = None      # re-apply on the next tick
 
 
 class VideoBackdrop:
