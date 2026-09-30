@@ -84,6 +84,13 @@ class BattleMapState:
             self.sprites = tuple(s for s in self.sprites if s is not sprite)
         return sprite
 
+    def clear_sprites(self) -> int:
+        """Remove all sprites in one change; returns how many there were.
+        The name counter keeps counting, so old names still aren't reused."""
+        count = len(self.sprites)
+        self.sprites = ()
+        return count
+
     def _next_default_name(self) -> str:
         while True:
             self._sprite_counter += 1

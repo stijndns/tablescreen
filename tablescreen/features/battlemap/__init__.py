@@ -45,6 +45,7 @@ Battlemap commands:
                                       default names sprite1, sprite2, ...
     map sprite remove <name>        — remove a sprite
     map sprite list                 — all sprites with their cells
+    map sprite clear                — remove all sprites
 """
 
 
@@ -211,9 +212,13 @@ class BattleMapFeature(FeatureBase):
             print(f"[+] Removed sprite '{sprite.name}' from {cell}.")
         elif action == "list":
             print(format_sprites(self.state.sprites, self.state.coords_style))
+        elif action == "clear":
+            count = self.state.clear_sprites()
+            self.services.send(self.name, "render")
+            print(f"[+] Removed {count} sprite{'s' if count != 1 else ''}.")
         else:
             print("Usage: map sprite add <file> <cell> [as <name>] | "
-                  "remove <name> | list")
+                  "remove <name> | list | clear")
 
     def _sprite_add(self, args: list[str]) -> None:
         if len(args) == 4 and args[2].lower() == "as":
@@ -414,7 +419,7 @@ class BattleMapFeature(FeatureBase):
             return [s for s in options if s.startswith(text)]
         if sub == "sprite":
             if len(parts) == 2:
-                return [s for s in ("add", "remove", "list") if s.startswith(text)]
+                return [s for s in ("add", "remove", "list", "clear") if s.startswith(text)]
             action = parts[2].lower()
             if action == "add" and len(parts) == 3:
                 clean = line.split()[-1] if not line.endswith(" ") else ""
