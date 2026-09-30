@@ -7,6 +7,7 @@ size); only the backdrop video needs streaming.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -46,8 +47,26 @@ def fit_size(size: tuple[int, int], cell: float) -> tuple[int, int]:
     return max(1, round(width * scale)), max(1, round(height * scale))
 
 
-def scaled_frames(path: Path, size: tuple[int, int]) -> list[Image.Image]:
-    """Every frame as RGBA at ``size``, one source frame decoded at a time."""
+def rotated_size(size: tuple[int, int], degrees: float) -> tuple[int, int]:
+    """Bounding box of an image rotated by ``degrees`` (what gets fitted)."""
+    width, height = size
+    if degrees % 90 == 0:
+        return (height, width) if degrees % 180 else (width, height)
+    rad = math.radians(degrees)
+    cos, sin = abs(math.cos(rad)), abs(math.sin(rad))
+    return (math.ceil(width * cos + height * sin), math.ceil(width * sin + height * cos))
+
+
+def scaled_frames(path: Path, size: tuple[int, int],
+                  rotation: float = 0) -> list[Image.Image]:
+    """Every frame as RGBA, rotated clockwise then scaled to ``size``.
+    Rotating first, at source resolution, keeps it sharp."""
     with Image.open(path) as img:
-        return [frame.convert("RGBA").resize(size, Image.LANCZOS)
-                for frame in ImageSequence.Iterator(img)]
+        frames = []
+        for frame in ImageSequence.Iterator(img):
+            frame = frame.convert("RGBA")
+            if rotation:
+                # Pillow rotates counter-clockwise; multiples of 90 are exact.
+                frame = frame.rotate(-rotation, resample=Image.BICUBIC, expand=True)
+            frames.append(frame.resize(size, Image.LANCZOS))
+        return frames

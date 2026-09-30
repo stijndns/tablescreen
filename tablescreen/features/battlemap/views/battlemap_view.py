@@ -18,7 +18,8 @@ from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, cell_px
                           cell_to_pixels, coord_labels, grid_line_positions,
                           label_font_px)
 from ..video import VideoStream, is_video, oversize_warning, probe
-from ..sprite_images import SpriteSource, fit_size, read_source, scaled_frames
+from ..sprite_images import (SpriteSource, fit_size, read_source, rotated_size,
+                             scaled_frames)
 from .animation import AnimationClock, SpriteAnimation, VideoBackdrop
 
 from ....core.paths import IMAGES_DIR
@@ -66,7 +67,7 @@ class BattleMapView(tk.Frame):
 
         self._sprites: tuple = ()           # from the snapshot
         self._sprite_sources: dict[str, Optional[SpriteSource]] = {}   # None = failed
-        # Keyed by (file, w, h); only keys in use at the current cell size.
+        # Keyed by (file, rotation, w, h); only keys currently in use.
         self._sprite_frames: dict[tuple, list[ImageTk.PhotoImage]] = {}
         self._sprite_anims: dict[tuple, SpriteAnimation] = {}
 
@@ -224,11 +225,13 @@ class BattleMapView(tk.Frame):
             source = self._sprite_source(sprite.file)
             if source is None:
                 continue
-            key = (sprite.file, *fit_size(source.size, cell))
+            size = fit_size(rotated_size(source.size, sprite.rotation), cell)
+            key = (sprite.file, sprite.rotation, *size)
             if key not in frames:
                 # Reuse frames and animations from the last draw where possible,
                 # so a redraw neither re-decodes nor restarts an animation.
-                loaded = self._sprite_frames.get(key) or self._load_frames(sprite.file, key[1:])
+                loaded = (self._sprite_frames.get(key)
+                          or self._load_frames(sprite.file, size, sprite.rotation))
                 if not loaded:
                     continue
                 frames[key] = loaded
@@ -265,9 +268,11 @@ class BattleMapView(tk.Frame):
                 self._sprite_sources[file] = None       # don't retry every draw
         return self._sprite_sources[file]
 
-    def _load_frames(self, file: str, size: tuple[int, int]) -> list[ImageTk.PhotoImage]:
+    def _load_frames(self, file: str, size: tuple[int, int],
+                     rotation: float) -> list[ImageTk.PhotoImage]:
         try:
-            return [ImageTk.PhotoImage(f) for f in scaled_frames(IMAGES_DIR / file, size)]
+            return [ImageTk.PhotoImage(f)
+                    for f in scaled_frames(IMAGES_DIR / file, size, rotation)]
         except Exception as exc:
             print(f"[!] Could not load sprite image {file}: {exc}")
             return []

@@ -7,7 +7,7 @@ shows, and where, lives on the view.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 SPRITE_NAME = re.compile(r"[A-Za-z0-9_-]+")
@@ -19,6 +19,7 @@ class Sprite:
     file: str       # relative to assets/images
     row: int        # 1-based, row first like all coordinates
     col: int
+    rotation: float = 0     # degrees clockwise, 0 <= rotation < 360
 
 
 class BattleMapState:
@@ -83,6 +84,16 @@ class BattleMapState:
         if sprite is not None:
             self.sprites = tuple(s for s in self.sprites if s is not sprite)
         return sprite
+
+    def rotate_sprite(self, name: str, degrees: float) -> Optional[Sprite]:
+        """Rotate by ``degrees`` clockwise (negative = counter-clockwise),
+        relative to the current rotation. Keeps the sprite's draw order."""
+        old = self.find_sprite(name)
+        if old is None:
+            return None
+        new = replace(old, rotation=(old.rotation + degrees) % 360)
+        self.sprites = tuple(new if s is old else s for s in self.sprites)
+        return new
 
     def clear_sprites(self) -> int:
         """Remove all sprites in one change; returns how many there were.

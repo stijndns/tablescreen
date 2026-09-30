@@ -5,6 +5,7 @@ coordinate labels, for a TV lying flat under the minis.
 
 from __future__ import annotations
 
+import math
 import platform
 from typing import Optional
 
@@ -43,6 +44,9 @@ Battlemap commands:
     map sprite add <file> <cell> [as <name>]
                                     — image fitted in a cell (5,8 or E8);
                                       default names sprite1, sprite2, ...
+    map sprite rotate <name> <degrees>
+                                    — rotate clockwise by degrees (negative =
+                                      counter-clockwise), adds to the current
     map sprite remove <name>        — remove a sprite
     map sprite list                 — all sprites with their cells
     map sprite clear                — remove all sprites
@@ -53,11 +57,14 @@ def format_sprites(sprites: tuple[Sprite, ...], style: str) -> str:
     """The `map sprite list` table, cells in the active coords style."""
     if not sprites:
         return "No sprites."
-    rows = [(s.name, cell_label(s.row, s.col, style), s.file) for s in sprites]
-    w_name = max(len(r[0]) for r in rows)
-    w_cell = max(len(r[1]) for r in rows)
+    rotated = any(s.rotation for s in sprites)
+    rows = [(s.name, cell_label(s.row, s.col, style),
+             f"{s.rotation:g}°" if rotated else "", s.file) for s in sprites]
+    widths = [max(len(r[i]) for r in rows) for i in range(3)]
     lines = [f"Sprites ({len(rows)}):"]
-    lines += [f"  {n:<{w_name}}  {c:<{w_cell}}  {f}" for n, c, f in rows]
+    for row in rows:
+        cols = [f"{v:<{w}}" for v, w in zip(row, widths) if w] + [row[3]]
+        lines.append("  " + "  ".join(cols))
     return "\n".join(lines)
 
 class BattleMapFeature(FeatureBase):
@@ -210,6 +217,8 @@ class BattleMapFeature(FeatureBase):
             self.services.send(self.name, "render")
             cell = cell_label(sprite.row, sprite.col, self.state.coords_style)
             print(f"[+] Removed sprite '{sprite.name}' from {cell}.")
+        elif action == "rotate":
+            self._sprite_rotate(args)
         elif action == "list":
             print(format_sprites(self.state.sprites, self.state.coords_style))
         elif action == "clear":
@@ -218,7 +227,24 @@ class BattleMapFeature(FeatureBase):
             print(f"[+] Removed {count} sprite{'s' if count != 1 else ''}.")
         else:
             print("Usage: map sprite add <file> <cell> [as <name>] | "
-                  "remove <name> | list | clear")
+                  "rotate <name> <degrees> | remove <name> | list | clear")
+
+    def _sprite_rotate(self, args: list[str]) -> None:
+        try:
+            degrees = float(args[1]) if len(args) == 2 else math.nan
+        except ValueError:
+            degrees = math.nan
+        if not math.isfinite(degrees):
+            print("Usage: map sprite rotate <name> <degrees>  (clockwise; e.g. 90, -45)")
+            return
+        sprite = self.state.rotate_sprite(args[0], degrees)
+        if sprite is None:
+            print(f"[!] No sprite named '{args[0]}'. See 'map sprite list'.")
+            return
+        self.services.send(self.name, "render")
+        direction = "clockwise" if degrees >= 0 else "counter-clockwise"
+        print(f"[+] Rotated '{sprite.name}' {abs(degrees):g}° {direction} "
+              f"(now {sprite.rotation:g}°).")
 
     def _sprite_add(self, args: list[str]) -> None:
         if len(args) == 4 and args[2].lower() == "as":
@@ -419,7 +445,8 @@ class BattleMapFeature(FeatureBase):
             return [s for s in options if s.startswith(text)]
         if sub == "sprite":
             if len(parts) == 2:
-                return [s for s in ("add", "remove", "list", "clear") if s.startswith(text)]
+                return [s for s in ("add", "rotate", "remove", "list", "clear")
+                        if s.startswith(text)]
             action = parts[2].lower()
             if action == "add" and len(parts) == 3:
                 clean = line.split()[-1] if not line.endswith(" ") else ""
@@ -427,7 +454,7 @@ class BattleMapFeature(FeatureBase):
                                       CURRENT_OS, "image")
             if action == "add" and len(parts) == 5:
                 return ["as"] if "as".startswith(text.lower()) else []
-            if action == "remove" and len(parts) == 3:
+            if action in ("remove", "rotate") and len(parts) == 3:
                 return [s.name for s in self.state.sprites
                         if s.name.lower().startswith(text.lower())]
         return []
