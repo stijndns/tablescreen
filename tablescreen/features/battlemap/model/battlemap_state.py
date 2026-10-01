@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 from .aoe import AoE
-from .grid import CellArea
+from .grid import DEFAULT_COORDS_STYLE, CellArea
 
 SPRITE_NAME = re.compile(r"[A-Za-z0-9_-]+")     # also used for AoE names
 
@@ -36,7 +36,7 @@ class BattleMapState:
         self.grid_scale_pct: float = 100.0
         # "numbers" (5,8) or "letters" (E8). Row first either way. The
         # feature sets the configured default during build().
-        self.coords_style: str = "numbers"
+        self.coords_style: str = DEFAULT_COORDS_STYLE
         # Add order = draw order. Replaced, never mutated, so a snapshot taken
         # on the mainloop can't see a half-applied change.
         self.sprites: tuple[Sprite, ...] = ()

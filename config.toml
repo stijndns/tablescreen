@@ -21,7 +21,7 @@ cell_size_in = 1.0
 # pixels_per_inch = 88.1    # override if the measured grid is off
 grid_color = "#ffffff"
 grid_width = 1
-coords_style = "numbers"    # numbers (5,8) | letters (E8)
+coords_style = "letters"    # letters (E8) | numbers (5,8)
 coords_location = "sides"   # sides | cells
 # coords_color = "#ffffff"  # defaults to grid_color
 

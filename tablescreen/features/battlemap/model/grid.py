@@ -17,6 +17,8 @@ DEFAULT_SCREEN_DIAGONAL_IN = 50.0     # the table TV
 DEFAULT_CELL_SIZE_IN = 1.0            # 1" squares for 5e minis
 DEFAULT_GRID_COLOR = "#ffffff"
 DEFAULT_GRID_WIDTH = 1
+DEFAULT_COORDS_STYLE = "letters"      # E8 reads easier in commands than 5,8
+DEFAULT_COORDS_LOCATION = "sides"
 
 # Runtime `map grid resize <percent>` bounds.
 MIN_SCALE_PCT = 10.0
@@ -35,8 +37,8 @@ class GridSettings:
     pixels_per_inch: Optional[float] = None   # override; None = derive
     color: str = DEFAULT_GRID_COLOR
     width: int = DEFAULT_GRID_WIDTH
-    coords_style: str = "numbers"             # default; runtime value is state
-    coords_location: str = "sides"            # default; runtime value is per view
+    coords_style: str = DEFAULT_COORDS_STYLE        # runtime value is state
+    coords_location: str = DEFAULT_COORDS_LOCATION  # runtime value is per view
     coords_color: Optional[str] = None        # None = same as the grid colour
 
     @property
@@ -72,8 +74,7 @@ class GridSettings:
                             f"using {default or 'the grid colour'}.")
             return default
 
-        def choice(key: str, options: tuple[str, ...]) -> str:
-            default = options[0]
+        def choice(key: str, options: tuple[str, ...], default: str) -> str:
             value = config.get(key, default)
             if isinstance(value, str) and value.strip().lower() in options:
                 return value.strip().lower()
@@ -93,8 +94,9 @@ class GridSettings:
             pixels_per_inch=positive("pixels_per_inch", None),
             color=colour("grid_color", DEFAULT_GRID_COLOR),
             width=width,
-            coords_style=choice("coords_style", COORD_STYLES),
-            coords_location=choice("coords_location", COORD_LOCATIONS),
+            coords_style=choice("coords_style", COORD_STYLES, DEFAULT_COORDS_STYLE),
+            coords_location=choice("coords_location", COORD_LOCATIONS,
+                                   DEFAULT_COORDS_LOCATION),
             coords_color=colour("coords_color", None),
         )
         return settings, warnings
