@@ -10,9 +10,13 @@ import re
 from dataclasses import dataclass, replace
 from typing import Optional
 
+from .aoe import AoE
 from .grid import CellArea
 
-SPRITE_NAME = re.compile(r"[A-Za-z0-9_-]+")
+SPRITE_NAME = re.compile(r"[A-Za-z0-9_-]+")     # also used for AoE names
+
+# Distinct, readable over most maps; cycled per AoE so overlaps stay apart.
+AOE_COLORS = ("#ff4040", "#40a0ff", "#ffd000", "#40e040", "#e040ff", "#ff8c00")
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,9 @@ class BattleMapState:
         # on the mainloop can't see a half-applied change.
         self.sprites: tuple[Sprite, ...] = ()
         self._sprite_counter = 0     # default names never reuse a number
+        self.aoes: tuple[AoE, ...] = ()     # same snapshot-safe pattern
+        self._aoe_counter = 0
+        self._aoe_colors_used = 0
 
     def snapshot(self) -> dict:
         """Return a dict for the battlemap state."""
@@ -45,6 +52,7 @@ class BattleMapState:
             "grid_scale_pct": self.grid_scale_pct,
             "coords_style": self.coords_style,
             "sprites": self.sprites,
+            "aoes": self.aoes,
         }
 
     def load_map_image(self, filename: str) -> None:
@@ -121,3 +129,39 @@ class BattleMapState:
             name = f"sprite{self._sprite_counter}"
             if not self.find_sprite(name):      # skip names taken via 'as'
                 return name
+
+    # ── Areas of effect ───────────────────────────────────────────────────
+
+    def find_aoe(self, name: str) -> Optional[AoE]:
+        key = name.lower()
+        return next((a for a in self.aoes if a.name.lower() == key), None)
+
+    def add_aoe(self, fields: dict, name: Optional[str] = None) -> AoE:
+        """Add an AoE from parse_aoe() fields; raises ValueError for a bad name."""
+        if name is None:
+            while True:
+                self._aoe_counter += 1
+                name = f"aoe{self._aoe_counter}"
+                if not self.find_aoe(name):
+                    break
+        elif not SPRITE_NAME.fullmatch(name):
+            raise ValueError(f"Invalid AoE name '{name}': use letters, "
+                             f"digits, '_' and '-' only.")
+        elif self.find_aoe(name):
+            raise ValueError(f"An AoE named '{name}' already exists.")
+        color = AOE_COLORS[self._aoe_colors_used % len(AOE_COLORS)]
+        self._aoe_colors_used += 1
+        aoe = AoE(name=name, color=color, **fields)
+        self.aoes = self.aoes + (aoe,)
+        return aoe
+
+    def remove_aoe(self, name: str) -> Optional[AoE]:
+        aoe = self.find_aoe(name)
+        if aoe is not None:
+            self.aoes = tuple(a for a in self.aoes if a is not aoe)
+        return aoe
+
+    def clear_aoes(self) -> int:
+        count = len(self.aoes)
+        self.aoes = ()
+        return count

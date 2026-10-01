@@ -1,19 +1,22 @@
 """
 battlemap_view.py — The battlemap display.
 
-One canvas in tagged layers: backdrop → sprites → grid → coords (bottom to top).
+One canvas in tagged layers: backdrop → sprites → aoe → grid → coords (bottom
+to top).
 The backdrop is a static image or a streamed video (see animation.py); it is
 expensive, so other layers never force it to redraw. Mainloop thread only.
 """
 
 from __future__ import annotations
 
+import math
 import tkinter as tk
 from typing import Callable, Optional, Tuple
 
 from PIL import Image, ImageTk
 
 from ..styling import *
+from ..model.aoe import AoE, aoe_cells
 from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX,
                           area_to_pixels, cell_px, coord_labels,
                           grid_line_positions, label_font_px)
@@ -26,6 +29,7 @@ from ....core.paths import IMAGES_DIR
 
 BACKDROP_TAG = "backdrop"
 SPRITES_TAG = "sprites"
+AOE_TAG = "aoe"
 GRID_TAG = "grid"
 COORDS_TAG = "coords"
 
@@ -66,6 +70,7 @@ class BattleMapView(tk.Frame):
         self._coords_style = grid_settings.coords_style
 
         self._sprites: tuple = ()           # from the snapshot
+        self._aoes: tuple = ()              # from the snapshot
         self._sprite_sources: dict[str, Optional[SpriteSource]] = {}   # None = failed
         # Keyed by (file, rotation, w, h); only keys currently in use.
         self._sprite_frames: dict[tuple, list[ImageTk.PhotoImage]] = {}
@@ -151,6 +156,7 @@ class BattleMapView(tk.Frame):
         self._grid_scale_pct = snapshot.get("grid_scale_pct", 100.0)
         self._coords_style = snapshot.get("coords_style", self._coords_style)
         self._sprites = snapshot.get("sprites", ())
+        self._aoes = snapshot.get("aoes", ())
 
         filename = snapshot.get("bgimage")
         if filename != self._filename:
@@ -170,13 +176,15 @@ class BattleMapView(tk.Frame):
 
         self._draw_backdrop(width, height)
         self._draw_sprites(width, height)
+        self._draw_aoes(width, height)
         self._draw_grid(width, height)
         self._draw_coords(width, height)
 
     def _restack(self) -> None:
-        """Enforce backdrop → sprites → grid → coords; new items land on top."""
+        """Enforce backdrop → sprites → aoe → grid → coords; new items land on top."""
         self.canvas.tag_lower(BACKDROP_TAG)
         self.canvas.tag_raise(SPRITES_TAG)
+        self.canvas.tag_raise(AOE_TAG)
         self.canvas.tag_raise(GRID_TAG)
         self.canvas.tag_raise(COORDS_TAG)
 
@@ -287,6 +295,45 @@ class BattleMapView(tk.Frame):
             print(f"[!] Could not load sprite image {file}: {exc}")
             return []
 
+    # ── Areas of effect ───────────────────────────────────────────────────
+
+    def _draw_aoes(self, width: int, height: int) -> None:
+        """Hatching (Tk has no transparency) + an outline + an origin dot."""
+        self.canvas.delete(AOE_TAG)
+        cell = self.current_cell_px()
+        if not cell or cell < MIN_CELL_PX:
+            return
+        spacing = max(4.0, cell / 6)
+        hatch_w, edge_w = max(1, round(cell / 44)), max(2, round(cell / 22))
+        for aoe in self._aoes:
+            cells = aoe_cells(aoe)
+            for row, col in cells:
+                x, y = (col - 1) * cell, (row - 1) * cell
+                if x >= width or y >= height:
+                    continue
+                for line in _hatch(x, y, cell, spacing):
+                    self.canvas.create_line(*line, fill=aoe.color, width=hatch_w,
+                                            tags=AOE_TAG)
+                # Outline: edges whose neighbour isn't in the area.
+                for (dr, dc), edge in (((-1, 0), (x, y, x + cell, y)),
+                                       ((1, 0), (x, y + cell, x + cell, y + cell)),
+                                       ((0, -1), (x, y, x, y + cell)),
+                                       ((0, 1), (x + cell, y, x + cell, y + cell))):
+                    if (row + dr, col + dc) not in cells:
+                        self.canvas.create_line(*edge, fill=aoe.color, width=edge_w,
+                                                capstyle="projecting", tags=AOE_TAG)
+            self._draw_origin(aoe, cell)
+        self._restack()
+
+    def _draw_origin(self, aoe: AoE, cell: float) -> None:
+        """A dot on the origin: the cell centre, or the corner for 'E8c'."""
+        x, y = (aoe.col - 1) * cell, (aoe.row - 1) * cell
+        if not aoe.corner:
+            x, y = x + cell / 2, y + cell / 2
+        r = max(3.0, cell * 0.1)
+        self.canvas.create_oval(x - r, y - r, x + r, y + r, fill=aoe.color,
+                                outline="black", width=2, tags=AOE_TAG)
+
     # ── Grid ──────────────────────────────────────────────────────────────
 
     @property
@@ -375,3 +422,16 @@ class BattleMapView(tk.Frame):
             if x2 > width or y2 > height:
                 self.canvas.delete(shadow, text)
         self._restack()
+
+
+def _hatch(x: float, y: float, cell: float, spacing: float):
+    """'/' lines through one cell, on the canvas-wide family x + y = k*spacing,
+    so the hatching runs on seamlessly from cell to cell."""
+    base = x + y
+    k = math.floor(base / spacing) + 1
+    while (t := k * spacing - base) < 2 * cell:
+        if t <= cell:
+            yield x + t, y, x, y + t
+        else:
+            yield x + cell, y + t - cell, x + t - cell, y + cell
+        k += 1

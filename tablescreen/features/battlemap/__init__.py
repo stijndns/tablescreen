@@ -14,11 +14,13 @@ from PIL import Image
 from ...core.completion import get_arg_parts, tab_completion
 from ...core.feature import FeatureBase, ShellServices
 from ...core.paths import IMAGES_DIR
+from .model.aoe import (DIRECTIONS, ORTHOGONAL, SHAPES, AoE, aoe_cells,
+                        parse_aoe)
 from .model.battlemap_state import BattleMapState, Sprite
 from .model.grid import (COORD_LOCATIONS, COORD_STYLES, GridSettings,
                          MAX_SCALE_PCT, MIN_CELL_PX, MIN_LABEL_FONT_PX,
                          MIN_SCALE_PCT, CellArea, area_label, area_to_pixels,
-                         cell_px, label_font_px, parse_area, parse_cell,
+                         cell_label, cell_px, label_font_px, parse_area, parse_cell,
                          pixels_per_inch)
 from .sprite_images import FRAME_MEMORY_WARN_BYTES
 from .video import VIDEO_EXTENSIONS
@@ -55,7 +57,44 @@ Battlemap commands:
     map sprite remove <name>        — remove a sprite
     map sprite list                 — all sprites with their cells
     map sprite clear                — remove all sprites
+
+Areas of effect (sizes in feet, multiples of 5; diagonals count 5-10-5):
+  An origin is a cell centre (E8, 5,8) or a cell's top-left corner (E8c, 5,8c).
+    map aoe sphere <origin> <radius> [as <name>]
+        origin: E8 or E8c                        e.g. map aoe sphere E8 20
+    map aoe cube <corner> <size> [as <name>]
+        corner: E8c only — the cube's top-left;  e.g. map aoe cube E8c 15
+        it extends right and down from there
+    map aoe cone <cell> <length> <direction> [mirror] [as <name>]
+        cell: E8 only — the caster; the cone starts next to it
+        direction: n ne e se s sw w nw  (n = top of the screen)
+        mirror: n/e/s/w only — 2-wide steps lean down (e/w) or right (n/s);
+                mirror makes them lean up / left.  e.g. map aoe cone E8 15 e
+    map aoe list                    — all AoEs
+    map aoe remove <name>           — remove one
+    map aoe clear                   — remove all
 """
+
+
+def describe_aoe(aoe: AoE, style: str) -> str:
+    """'sphere 20 ft at E8 (cell centre)' etc., in the active coords style."""
+    origin = cell_label(aoe.row, aoe.col, style) + ("c" if aoe.corner else "")
+    if aoe.shape == "sphere":
+        where = "corner" if aoe.corner else "cell centre"
+        return f"sphere {aoe.size_ft} ft radius at {origin} ({where})"
+    if aoe.shape == "cube":
+        return f"cube {aoe.size_ft} ft from {origin} (top-left corner)"
+    mirrored = ", mirrored" if aoe.mirror else ""
+    return f"cone {aoe.size_ft} ft {aoe.direction} from {origin}{mirrored}"
+
+
+def format_aoes(aoes: tuple[AoE, ...], style: str) -> str:
+    if not aoes:
+        return "No areas of effect."
+    width = max(len(a.name) for a in aoes)
+    lines = [f"Areas of effect ({len(aoes)}):"]
+    lines += [f"  {a.name:<{width}}  {describe_aoe(a, style)}" for a in aoes]
+    return "\n".join(lines)
 
 
 def format_sprites(sprites: tuple[Sprite, ...], style: str) -> str:
@@ -147,6 +186,8 @@ class BattleMapFeature(FeatureBase):
             self._cmd_grid(rest)
         elif sub == "coords":
             self._cmd_coords(rest)
+        elif sub == "aoe":
+            self._cmd_aoe(rest)
         elif sub == "sprite":
             self._cmd_sprite(rest)
         else:
@@ -238,6 +279,40 @@ class BattleMapFeature(FeatureBase):
             print("Usage: map sprite add <file> <cell|range> [as <name>] | "
                   "move <name> <cell> | resize <name> <range> | "
                   "rotate <name> <degrees> | remove <name> | list | clear")
+
+    def _cmd_aoe(self, rest: list[str]) -> None:
+        action = rest[0].lower() if rest else ""
+        args = rest[1:]
+        style = self.state.coords_style
+        if action in SHAPES:
+            try:
+                fields, name = parse_aoe(action, args)
+                aoe = self.state.add_aoe(fields, name)
+            except ValueError as exc:
+                print(f"[!] {exc}" if not str(exc).startswith("Usage") else exc)
+                return
+            self.services.send(self.name, "show")
+            print(f"[+] {aoe.name}: {describe_aoe(aoe, style)} — "
+                  f"{len(aoe_cells(aoe))} cells.")
+        elif action == "list":
+            print(format_aoes(self.state.aoes, style))
+        elif action == "remove":
+            if len(args) != 1:
+                print("Usage: map aoe remove <name>")
+                return
+            aoe = self.state.remove_aoe(args[0])
+            if aoe is None:
+                print(f"[!] No AoE named '{args[0]}'. See 'map aoe list'.")
+                return
+            self.services.send(self.name, "render")
+            print(f"[+] Removed {aoe.name}: {describe_aoe(aoe, style)}.")
+        elif action == "clear":
+            count = self.state.clear_aoes()
+            self.services.send(self.name, "render")
+            print(f"[+] Removed {count} area{'s' if count != 1 else ''} of effect.")
+        else:
+            print("Usage: map aoe sphere|cube|cone ... | list | remove <name> | clear"
+                  "  (see 'map help')")
 
     def _sprite_rotate(self, args: list[str]) -> None:
         try:
@@ -471,7 +546,7 @@ class BattleMapFeature(FeatureBase):
     def complete_battlemap(self, text, line, begidx, endidx) -> list[str]:
         parts = get_arg_parts(line[:begidx])
         top_subs = ["show", "bgclear", "fullscreen", "restore", "grid", "coords",
-                    "sprite"]
+                    "sprite", "aoe"]
 
         if len(parts) == 1:
             return [s for s in top_subs if s.startswith(text)]
@@ -497,6 +572,21 @@ class BattleMapFeature(FeatureBase):
             else:
                 options = ()
             return [s for s in options if s.startswith(text)]
+        if sub == "aoe":
+            if len(parts) == 2:
+                options = (*SHAPES, "list", "remove", "clear")
+            elif parts[2].lower() == "remove" and len(parts) == 3:
+                options = tuple(a.name for a in self.state.aoes)
+            elif parts[2].lower() == "cone" and len(parts) == 5:
+                options = tuple(DIRECTIONS)
+            elif (parts[2].lower() == "cone" and len(parts) == 6
+                  and parts[5].lower() in ORTHOGONAL):
+                options = ("mirror", "as")
+            elif parts[2].lower() in SHAPES and len(parts) >= 5:
+                options = ("as",)
+            else:
+                options = ()
+            return [o for o in options if o.lower().startswith(text.lower())]
         if sub == "sprite":
             if len(parts) == 2:
                 return [s for s in ("add", "move", "resize", "rotate", "remove",
