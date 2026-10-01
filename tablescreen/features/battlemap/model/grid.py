@@ -208,6 +208,54 @@ def parse_cell(text: str) -> Optional[tuple[int, int]]:
     return (row, col) if row >= 1 and col >= 1 else None
 
 
+@dataclass(frozen=True)
+class CellArea:
+    """A rectangle of cells (a sprite's footprint), 1-based and inclusive."""
+    top: int
+    left: int
+    bottom: int
+    right: int
+
+    @classmethod
+    def spanning(cls, a: tuple[int, int], b: tuple[int, int]) -> "CellArea":
+        """The rectangle with corners a and b (row, col), in any order."""
+        return cls(min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1]))
+
+    @property
+    def rows(self) -> int:
+        return self.bottom - self.top + 1
+
+    @property
+    def cols(self) -> int:
+        return self.right - self.left + 1
+
+    def moved_to(self, row: int, col: int) -> "CellArea":
+        """Same size, top-left at (row, col)."""
+        return CellArea(row, col, row + self.rows - 1, col + self.cols - 1)
+
+
+def parse_area(text: str) -> Optional[CellArea]:
+    """A cell ("B3", "2,3") or a range ("B3:C4", "2,3:3,4"), else None."""
+    corners = [parse_cell(part) for part in text.split(":")]
+    if not 1 <= len(corners) <= 2 or None in corners:
+        return None
+    return CellArea.spanning(corners[0], corners[-1])
+
+
+def area_label(area: CellArea, style: str) -> str:
+    """"B3" for a single cell, "B3:C4" for a range, in the given style."""
+    first = cell_label(area.top, area.left, style)
+    if area.rows == area.cols == 1:
+        return first
+    return f"{first}:{cell_label(area.bottom, area.right, style)}"
+
+
+def area_to_pixels(area: CellArea, cell: float) -> tuple[float, float, float, float]:
+    """(x, y, width, height) of a footprint on the canvas."""
+    x, y = cell_to_pixels(row=area.top, col=area.left, cell=cell)
+    return x, y, area.cols * cell, area.rows * cell
+
+
 def label_font_px(cell: float, location: str) -> Optional[int]:
     """Label font size in pixels for this cell size, or None if too small."""
     fraction = SIDE_FONT_FRACTION if location == "sides" else CELL_FONT_FRACTION

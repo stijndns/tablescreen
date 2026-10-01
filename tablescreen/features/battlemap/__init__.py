@@ -17,8 +17,10 @@ from ...core.paths import IMAGES_DIR
 from .model.battlemap_state import BattleMapState, Sprite
 from .model.grid import (COORD_LOCATIONS, COORD_STYLES, GridSettings,
                          MAX_SCALE_PCT, MIN_CELL_PX, MIN_LABEL_FONT_PX,
-                         MIN_SCALE_PCT, cell_label, cell_px, label_font_px,
-                         parse_cell, pixels_per_inch)
+                         MIN_SCALE_PCT, CellArea, area_label, area_to_pixels,
+                         cell_px, label_font_px, parse_area, parse_cell,
+                         pixels_per_inch)
+from .sprite_images import FRAME_MEMORY_WARN_BYTES
 from .video import VIDEO_EXTENSIONS
 from .views.battlemap_view import BattleMapView
 
@@ -41,9 +43,12 @@ Battlemap commands:
                                     — row first: 5,8 (numbers) or E8 (letters)
     map coords location sides | cells
                                     — along the top/left edges, or in every cell
-    map sprite add <file> <cell> [as <name>]
-                                    — image fitted in a cell (5,8 or E8);
-                                      default names sprite1, sprite2, ...
+    map sprite add <file> <cell|range> [as <name>]
+                                    — image fitted in a cell (E8) or a range of
+                                      cells (E8:F9); default names sprite1, ...
+    map sprite move <name> <cell>   — move the top-left there, keeping the size
+    map sprite resize <name> <range>
+                                    — set the footprint, e.g. B3:C4 or B3 (1x1)
     map sprite rotate <name> <degrees>
                                     — rotate clockwise by degrees (negative =
                                       counter-clockwise), adds to the current
@@ -58,7 +63,7 @@ def format_sprites(sprites: tuple[Sprite, ...], style: str) -> str:
     if not sprites:
         return "No sprites."
     rotated = any(s.rotation for s in sprites)
-    rows = [(s.name, cell_label(s.row, s.col, style),
+    rows = [(s.name, area_label(s.area, style),
              f"{s.rotation:g}°" if rotated else "", s.file) for s in sprites]
     widths = [max(len(r[i]) for r in rows) for i in range(3)]
     lines = [f"Sprites ({len(rows)}):"]
@@ -215,10 +220,14 @@ class BattleMapFeature(FeatureBase):
                 print(f"[!] No sprite named '{args[0]}'. See 'map sprite list'.")
                 return
             self.services.send(self.name, "render")
-            cell = cell_label(sprite.row, sprite.col, self.state.coords_style)
-            print(f"[+] Removed sprite '{sprite.name}' from {cell}.")
+            where = area_label(sprite.area, self.state.coords_style)
+            print(f"[+] Removed sprite '{sprite.name}' from {where}.")
         elif action == "rotate":
             self._sprite_rotate(args)
+        elif action == "move":
+            self._sprite_move(args)
+        elif action == "resize":
+            self._sprite_resize(args)
         elif action == "list":
             print(format_sprites(self.state.sprites, self.state.coords_style))
         elif action == "clear":
@@ -226,7 +235,8 @@ class BattleMapFeature(FeatureBase):
             self.services.send(self.name, "render")
             print(f"[+] Removed {count} sprite{'s' if count != 1 else ''}.")
         else:
-            print("Usage: map sprite add <file> <cell> [as <name>] | "
+            print("Usage: map sprite add <file> <cell|range> [as <name>] | "
+                  "move <name> <cell> | resize <name> <range> | "
                   "rotate <name> <degrees> | remove <name> | list | clear")
 
     def _sprite_rotate(self, args: list[str]) -> None:
@@ -248,27 +258,61 @@ class BattleMapFeature(FeatureBase):
 
     def _sprite_add(self, args: list[str]) -> None:
         if len(args) == 4 and args[2].lower() == "as":
-            file, cell_text, name = args[0], args[1], args[3]
+            file, where, name = args[0], args[1], args[3]
         elif len(args) == 2:
-            (file, cell_text), name = args, None
+            (file, where), name = args, None
         else:
-            print("Usage: map sprite add <file> <cell> [as <name>]")
+            print("Usage: map sprite add <file> <cell|range> [as <name>]")
             return
 
-        cell = parse_cell(cell_text)
-        if cell is None:
-            print(f"[!] Invalid cell '{cell_text}'. Use e.g. 5,8 or E8.")
+        area = parse_area(where)
+        if area is None:
+            print(f"[!] Invalid cell or range '{where}'. Use e.g. E8, 5,8 or E8:F9.")
             return
         if not (IMAGES_DIR / file).is_file():
             print(f"[!] File not found: {IMAGES_DIR / file}")
             return
         try:
-            sprite = self.state.add_sprite(file, *cell, name)
+            sprite = self.state.add_sprite(file, area, name)
         except ValueError as exc:
             print(f"[!] {exc}")
             return
-        self.services.send(self.name, "sprite_added",
-                           (sprite, self.state.coords_style, self.state.grid_scale_pct))
+        self._send_sprite_change("added", sprite, None)
+
+    def _sprite_move(self, args: list[str]) -> None:
+        if len(args) != 2:
+            print("Usage: map sprite move <name> <cell>")
+            return
+        if ":" in args[1]:
+            print("[!] move takes a single cell (the new top-left); "
+                  "use 'map sprite resize' to change the footprint.")
+            return
+        cell = parse_cell(args[1])
+        if cell is None:
+            print(f"[!] Invalid cell '{args[1]}'. Use e.g. 5,8 or E8.")
+            return
+        self._change_sprite("moved", args[0], lambda: self.state.move_sprite(args[0], *cell))
+
+    def _sprite_resize(self, args: list[str]) -> None:
+        area = parse_area(args[1]) if len(args) == 2 else None
+        if area is None:
+            print("Usage: map sprite resize <name> <range>  (e.g. B3:C4, or B3 for 1x1)")
+            return
+        self._change_sprite("resized", args[0], lambda: self.state.resize_sprite(args[0], area))
+
+    def _change_sprite(self, verb: str, name: str, change) -> None:
+        old = self.state.find_sprite(name)
+        if old is None:
+            print(f"[!] No sprite named '{name}'. See 'map sprite list'.")
+            return
+        self._send_sprite_change(verb, change(), old.area)
+
+    def _send_sprite_change(self, verb: str, sprite: Sprite,
+                            old_area: Optional[CellArea]) -> None:
+        """Reported by the consumer, which can check visibility and memory."""
+        self.services.send(self.name, "sprite_changed",
+                           (verb, sprite, old_area, self.state.coords_style,
+                            self.state.grid_scale_pct))
 
     @staticmethod
     def _parse_percent(text: str) -> Optional[float]:
@@ -318,11 +362,11 @@ class BattleMapFeature(FeatureBase):
             elif action == "location":
                 view.set_coords_location(value)
             print(self._coords_report(action, view, style, scale))
-        elif message.command == "sprite_added":
-            sprite, style, scale = message.arg
+        elif message.command == "sprite_changed":
+            verb, sprite, old_area, style, scale = message.arg
             self.slot.show()
             self.refresh()
-            print(self._sprite_report(sprite, style, scale))
+            print(self._sprite_report(verb, sprite, old_area, style, scale))
 
     # ── Grid calibration (mainloop thread — reads Tk geometry) ────────────
 
@@ -399,17 +443,27 @@ class BattleMapFeature(FeatureBase):
         return report
 
 
-    def _sprite_report(self, sprite: Sprite, style: str, scale: float) -> str:
-        cell = cell_label(sprite.row, sprite.col, style)
-        report = f"[+] Added sprite '{sprite.name}': {sprite.file} at {cell}."
+    def _sprite_report(self, verb: str, sprite: Sprite, old_area: Optional[CellArea],
+                       style: str, scale: float) -> str:
+        where = area_label(sprite.area, style)
+        if old_area is None:
+            report = f"[+] Added sprite '{sprite.name}': {sprite.file} at {where}."
+        else:
+            report = (f"[+] {verb.capitalize()} '{sprite.name}': "
+                      f"{area_label(old_area, style)} → {where}.")
+
+        view = self.views[0]
         ppi, _ = self._calibration()
-        if ppi is not None:
-            size = cell_px(ppi, self.grid_settings.cell_size_in, scale)
-            width, height = self.views[0].canvas.winfo_width(), self.views[0].canvas.winfo_height()
-            laid_out = width > 1 and height > 1     # 1x1 before the window maps
-            if laid_out and ((sprite.col - 1) * size >= width
-                             or (sprite.row - 1) * size >= height):
-                report += f"\n[!] {cell} is outside the visible grid; not drawn."
+        width, height = view.canvas.winfo_width(), view.canvas.winfo_height()
+        if ppi is not None and width > 1 and height > 1:    # 1x1 before mapping
+            x, y, _, _ = area_to_pixels(sprite.area,
+                                        cell_px(ppi, self.grid_settings.cell_size_in, scale))
+            if x >= width or y >= height:
+                report += f"\n[!] {where} is outside the visible grid; not drawn."
+        memory = view.frame_memory(sprite.name)
+        if memory > FRAME_MEMORY_WARN_BYTES:
+            report += (f"\n[!] '{sprite.name}' uses {memory / 2**20:.0f} MB of image "
+                       f"memory at this size (all animation frames).")
         return report
 
     # ── Tab completion ────────────────────────────────────────────────────
@@ -445,7 +499,8 @@ class BattleMapFeature(FeatureBase):
             return [s for s in options if s.startswith(text)]
         if sub == "sprite":
             if len(parts) == 2:
-                return [s for s in ("add", "rotate", "remove", "list", "clear")
+                return [s for s in ("add", "move", "resize", "rotate", "remove",
+                                    "list", "clear")
                         if s.startswith(text)]
             action = parts[2].lower()
             if action == "add" and len(parts) == 3:
@@ -454,7 +509,7 @@ class BattleMapFeature(FeatureBase):
                                       CURRENT_OS, "image")
             if action == "add" and len(parts) == 5:
                 return ["as"] if "as".startswith(text.lower()) else []
-            if action in ("remove", "rotate") and len(parts) == 3:
+            if action in ("remove", "rotate", "move", "resize") and len(parts) == 3:
                 return [s.name for s in self.state.sprites
                         if s.name.lower().startswith(text.lower())]
         return []

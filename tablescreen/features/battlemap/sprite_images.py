@@ -10,11 +10,12 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from PIL import Image, ImageSequence
 
 DEFAULT_FRAME_S = 0.1
+FRAME_MEMORY_WARN_BYTES = 400 * 2**20   # warn (but still show) above this
 
 
 @dataclass(frozen=True)
@@ -40,10 +41,10 @@ def read_source(path: Path) -> SpriteSource:
         return SpriteSource(img.size, durations)
 
 
-def fit_size(size: tuple[int, int], cell: float) -> tuple[int, int]:
-    """Largest size with the same proportions that fits in the cell."""
+def fit_size(size: tuple[int, int], box: tuple[float, float]) -> tuple[int, int]:
+    """Largest size with the same proportions that fits in the box."""
     width, height = size
-    scale = min(cell / width, cell / height)
+    scale = min(box[0] / width, box[1] / height)
     return max(1, round(width * scale)), max(1, round(height * scale))
 
 
@@ -58,15 +59,14 @@ def rotated_size(size: tuple[int, int], degrees: float) -> tuple[int, int]:
 
 
 def scaled_frames(path: Path, size: tuple[int, int],
-                  rotation: float = 0) -> list[Image.Image]:
+                  rotation: float = 0) -> Iterator[Image.Image]:
     """Every frame as RGBA, rotated clockwise then scaled to ``size``.
-    Rotating first, at source resolution, keeps it sharp."""
+    Rotating first, at source resolution, keeps it sharp. A generator, so the
+    caller can convert and drop each frame before the next is made."""
     with Image.open(path) as img:
-        frames = []
         for frame in ImageSequence.Iterator(img):
             frame = frame.convert("RGBA")
             if rotation:
                 # Pillow rotates counter-clockwise; multiples of 90 are exact.
                 frame = frame.rotate(-rotation, resample=Image.BICUBIC, expand=True)
-            frames.append(frame.resize(size, Image.LANCZOS))
-        return frames
+            yield frame.resize(size, Image.LANCZOS)

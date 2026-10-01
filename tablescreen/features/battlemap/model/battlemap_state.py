@@ -10,15 +10,16 @@ import re
 from dataclasses import dataclass, replace
 from typing import Optional
 
+from .grid import CellArea
+
 SPRITE_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 
 @dataclass(frozen=True)
 class Sprite:
     name: str
-    file: str       # relative to assets/images
-    row: int        # 1-based, row first like all coordinates
-    col: int
+    file: str               # relative to assets/images
+    area: CellArea          # footprint; the image is fitted into it
     rotation: float = 0     # degrees clockwise, 0 <= rotation < 360
 
 
@@ -65,7 +66,7 @@ class BattleMapState:
         key = name.lower()
         return next((s for s in self.sprites if s.name.lower() == key), None)
 
-    def add_sprite(self, file: str, row: int, col: int,
+    def add_sprite(self, file: str, area: CellArea,
                    name: Optional[str] = None) -> Sprite:
         """Add a sprite; raises ValueError for an invalid or taken name."""
         if name is None:
@@ -75,7 +76,7 @@ class BattleMapState:
                              f"digits, '_' and '-' only.")
         elif self.find_sprite(name):
             raise ValueError(f"A sprite named '{name}' already exists.")
-        sprite = Sprite(name, file, row, col)
+        sprite = Sprite(name, file, area)
         self.sprites = self.sprites + (sprite,)
         return sprite
 
@@ -89,9 +90,21 @@ class BattleMapState:
         """Rotate by ``degrees`` clockwise (negative = counter-clockwise),
         relative to the current rotation. Keeps the sprite's draw order."""
         old = self.find_sprite(name)
-        if old is None:
-            return None
-        new = replace(old, rotation=(old.rotation + degrees) % 360)
+        return old and self._replace(old, rotation=(old.rotation + degrees) % 360)
+
+    def move_sprite(self, name: str, row: int, col: int) -> Optional[Sprite]:
+        """Move the footprint's top-left to (row, col), keeping its size."""
+        old = self.find_sprite(name)
+        return old and self._replace(old, area=old.area.moved_to(row, col))
+
+    def resize_sprite(self, name: str, area: CellArea) -> Optional[Sprite]:
+        """Set the footprint exactly (may also shift the sprite)."""
+        old = self.find_sprite(name)
+        return old and self._replace(old, area=area)
+
+    def _replace(self, old: Sprite, **changes) -> Sprite:
+        """Swap in an updated record at the same position (draw order holds)."""
+        new = replace(old, **changes)
         self.sprites = tuple(new if s is old else s for s in self.sprites)
         return new
 

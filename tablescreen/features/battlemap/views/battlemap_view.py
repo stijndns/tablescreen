@@ -14,9 +14,9 @@ from typing import Callable, Optional, Tuple
 from PIL import Image, ImageTk
 
 from ..styling import *
-from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, cell_px,
-                          cell_to_pixels, coord_labels, grid_line_positions,
-                          label_font_px)
+from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX,
+                          area_to_pixels, cell_px, coord_labels,
+                          grid_line_positions, label_font_px)
 from ..video import VideoStream, is_video, oversize_warning, probe
 from ..sprite_images import (SpriteSource, fit_size, read_source, rotated_size,
                              scaled_frames)
@@ -70,6 +70,7 @@ class BattleMapView(tk.Frame):
         # Keyed by (file, rotation, w, h); only keys currently in use.
         self._sprite_frames: dict[tuple, list[ImageTk.PhotoImage]] = {}
         self._sprite_anims: dict[tuple, SpriteAnimation] = {}
+        self._sprite_keys: dict[str, tuple] = {}
 
         self._clock = AnimationClock(self.canvas)
         self._video_path = None             # set when the backdrop is a video
@@ -217,15 +218,16 @@ class BattleMapView(tk.Frame):
         frames: dict[tuple, list[ImageTk.PhotoImage]] = {}
         anims: dict[tuple, SpriteAnimation] = {}
         items: dict[tuple, list[int]] = {}
+        self._sprite_keys = {}              # name → frames key
 
         for sprite in self._sprites if cell and cell >= MIN_CELL_PX else ():
-            x, y = cell_to_pixels(row=sprite.row, col=sprite.col, cell=cell)
+            x, y, box_w, box_h = area_to_pixels(sprite.area, cell)
             if x >= width or y >= height:
-                continue                    # off the visible grid
+                continue                    # whole footprint off the canvas
             source = self._sprite_source(sprite.file)
             if source is None:
                 continue
-            size = fit_size(rotated_size(source.size, sprite.rotation), cell)
+            size = fit_size(rotated_size(source.size, sprite.rotation), (box_w, box_h))
             key = (sprite.file, sprite.rotation, *size)
             if key not in frames:
                 # Reuse frames and animations from the last draw where possible,
@@ -241,7 +243,9 @@ class BattleMapView(tk.Frame):
                         start=self._anim_start(sprite.file))
             image = anims[key].current_frame() if key in anims else frames[key][0]
             items.setdefault(key, []).append(self.canvas.create_image(
-                x + cell / 2, y + cell / 2, image=image, anchor="center", tags=SPRITES_TAG))
+                x + box_w / 2, y + box_h / 2, image=image, anchor="center",
+                tags=SPRITES_TAG))
+            self._sprite_keys[sprite.name] = key
 
         for key, anim in self._sprite_anims.items():
             if key not in anims:
@@ -252,6 +256,12 @@ class BattleMapView(tk.Frame):
                 self._clock.add(anim)
         self._sprite_frames, self._sprite_anims = frames, anims
         self._restack()
+
+    def frame_memory(self, name: str) -> int:
+        """Bytes of Tk image data behind a drawn sprite (0 if not drawn).
+        Shared with other sprites of the same file, rotation and size."""
+        key = self._sprite_keys.get(name)
+        return sum(p.width() * p.height() * 4 for p in self._sprite_frames.get(key, ()))
 
     def _anim_start(self, file: str) -> Optional[float]:
         """Start time of this file's animation at the previous cell size, so a
