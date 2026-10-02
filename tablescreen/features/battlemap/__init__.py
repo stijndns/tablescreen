@@ -15,7 +15,7 @@ from ...core.completion import get_arg_parts, tab_completion
 from ...core.feature import FeatureBase, ShellServices
 from ...core.paths import IMAGES_DIR
 from .model.aoe import (DIRECTIONS, ORTHOGONAL, SHAPES, AoE, aoe_cells,
-                        parse_aoe)
+                        parse_aoe, parse_shape_origin)
 from .model.battlemap_state import BattleMapState, Sprite
 from .model.grid import (COORD_LOCATIONS, COORD_STYLES, GridSettings,
                          MAX_SCALE_PCT, MIN_CELL_PX, MIN_LABEL_FONT_PX,
@@ -70,15 +70,22 @@ Areas of effect (sizes in feet, multiples of 5; diagonals count 5-10-5):
         direction: n ne e se s sw w nw  (n = top of the screen)
         mirror: n/e/s/w only — 2-wide steps lean down (e/w) or right (n/s);
                 mirror makes them lean up / left.  e.g. map aoe cone E8 15 e
+    map aoe move <name> <origin>    — new origin, same rules as creating it:
+                                      sphere E8 or E8c, cube E8c, cone E8
     map aoe list                    — all AoEs
     map aoe remove <name>           — remove one
     map aoe clear                   — remove all
 """
 
 
+def origin_label(aoe: AoE, style: str) -> str:
+    """'E8', or 'E8c' for a corner origin, in the given style."""
+    return cell_label(aoe.row, aoe.col, style) + ("c" if aoe.corner else "")
+
+
 def describe_aoe(aoe: AoE, style: str) -> str:
     """'sphere 20 ft at E8 (cell centre)' etc., in the active coords style."""
-    origin = cell_label(aoe.row, aoe.col, style) + ("c" if aoe.corner else "")
+    origin = origin_label(aoe, style)
     if aoe.shape == "sphere":
         where = "corner" if aoe.corner else "cell centre"
         return f"sphere {aoe.size_ft} ft radius at {origin} ({where})"
@@ -294,6 +301,8 @@ class BattleMapFeature(FeatureBase):
             self.services.send(self.name, "show")
             print(f"[+] {aoe.name}: {describe_aoe(aoe, style)} — "
                   f"{len(aoe_cells(aoe))} cells.")
+        elif action == "move":
+            self._aoe_move(args, style)
         elif action == "list":
             print(format_aoes(self.state.aoes, style))
         elif action == "remove":
@@ -311,8 +320,28 @@ class BattleMapFeature(FeatureBase):
             self.services.send(self.name, "render")
             print(f"[+] Removed {count} area{'s' if count != 1 else ''} of effect.")
         else:
-            print("Usage: map aoe sphere|cube|cone ... | list | remove <name> | clear"
+            print("Usage: map aoe sphere|cube|cone ... | move <name> <origin> | list | "
+                  "remove <name> | clear"
                   "  (see 'map help')")
+
+    def _aoe_move(self, args: list[str], style: str) -> None:
+        if len(args) != 2:
+            print("Usage: map aoe move <name> <origin>")
+            return
+        old = self.state.find_aoe(args[0])
+        if old is None:
+            print(f"[!] No AoE named '{args[0]}'. See 'map aoe list'.")
+            return
+        try:
+            origin = parse_shape_origin(old.shape, args[1])
+        except ValueError as exc:
+            print(f"[!] {exc}")
+            return
+        new = self.state.move_aoe(old.name, *origin)
+        self.services.send(self.name, "show")
+        print(f"[+] Moved {new.name}: {origin_label(old, style)} → "
+              f"{origin_label(new, style)} — now {describe_aoe(new, style)}, "
+              f"{len(aoe_cells(new))} cells.")
 
     def _sprite_rotate(self, args: list[str]) -> None:
         try:
@@ -574,8 +603,8 @@ class BattleMapFeature(FeatureBase):
             return [s for s in options if s.startswith(text)]
         if sub == "aoe":
             if len(parts) == 2:
-                options = (*SHAPES, "list", "remove", "clear")
-            elif parts[2].lower() == "remove" and len(parts) == 3:
+                options = (*SHAPES, "move", "list", "remove", "clear")
+            elif parts[2].lower() in ("remove", "move") and len(parts) == 3:
                 options = tuple(a.name for a in self.state.aoes)
             elif parts[2].lower() == "cone" and len(parts) == 5:
                 options = tuple(DIRECTIONS)

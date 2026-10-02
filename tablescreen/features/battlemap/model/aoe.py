@@ -68,6 +68,22 @@ def parse_feet(text: str) -> int:
     return int(raw)
 
 
+def parse_shape_origin(shape: str, text: str) -> tuple[int, int, bool]:
+    """(row, col, corner) if ``text`` is a valid origin for this shape; used by
+    both creating and moving, so the rules and messages are identical."""
+    origin = parse_origin(text)
+    if origin is None:
+        raise ValueError(f"Invalid origin '{text}'. Use a cell like E8 or 5,8, "
+                         f"or a corner like E8c.")
+    if shape == "cube" and not origin[2]:
+        raise ValueError(f"A cube starts at a corner: use {text}c (the top-left "
+                         f"corner of that cell); the cube extends right and down.")
+    if shape == "cone" and origin[2]:
+        raise ValueError(f"A cone starts from the caster's cell: use {text[:-1]} "
+                         f"(no 'c'); the cone begins next to that cell.")
+    return origin
+
+
 def parse_aoe(shape: str, args: list[str]) -> tuple[dict, Optional[str]]:
     """Fields for an AoE (without name/colour) and the 'as' name, if any.
     Raises ValueError with a message that says exactly what is wrong."""
@@ -79,17 +95,7 @@ def parse_aoe(shape: str, args: list[str]) -> tuple[dict, Optional[str]]:
     if len(args) not in arity:
         raise ValueError(f"Usage: {USAGE[shape]}")
 
-    origin = parse_origin(args[0])
-    if origin is None:
-        raise ValueError(f"Invalid origin '{args[0]}'. Use a cell like E8 or 5,8, "
-                         f"or a corner like E8c.")
-    row, col, corner = origin
-    if shape == "cube" and not corner:
-        raise ValueError(f"A cube starts at a corner: use {args[0]}c (the top-left "
-                         f"corner of that cell); the cube extends right and down.")
-    if shape == "cone" and corner:
-        raise ValueError(f"A cone starts from the caster's cell: use {args[0][:-1]} "
-                         f"(no 'c'); the cone begins next to that cell.")
+    row, col, corner = parse_shape_origin(shape, args[0])
     fields = {"shape": shape, "row": row, "col": col, "corner": corner,
               "size_ft": parse_feet(args[1])}
 

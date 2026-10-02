@@ -161,6 +161,15 @@ class BattleMapState:
             self.aoes = tuple(a for a in self.aoes if a is not aoe)
         return aoe
 
+    def move_aoe(self, name: str, row: int, col: int, corner: bool) -> Optional[AoE]:
+        """New origin; shape, size, direction, colour and order are kept."""
+        old = self.find_aoe(name)
+        if old is None:
+            return None
+        new = replace(old, row=row, col=col, corner=corner)
+        self.aoes = tuple(new if a is old else a for a in self.aoes)
+        return new
+
     def clear_aoes(self) -> int:
         count = len(self.aoes)
         self.aoes = ()
