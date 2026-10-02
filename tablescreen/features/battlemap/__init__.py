@@ -33,7 +33,8 @@ Battlemap commands:
     map show <file>                 — show an image or a looping .webm video
     map bgclear                     — clear the backdrop (window stays)
     map fullscreen                  — borderless fullscreen on its monitor
-    map restore                     — back to default windowed size
+    map restore                     — back to default windowed size; also
+                                      reopens the window if it was closed (X)
     map grid                        — show grid status and calibration
     map grid on | off               — show or hide the grid
     map grid resize <percent>       — cell size as % of the calibrated size
@@ -441,8 +442,9 @@ class BattleMapFeature(FeatureBase):
             monitor = window.fullscreen()
             print(f"[+] Battlemap fullscreen on monitor {monitor}")
         elif message.command == "restore":
-            window.restore()
-            print("[+] Restored battlemap window.")
+            reopened = window.restore()
+            print("[+] Reopened the battlemap window." if reopened
+                  else "[+] Restored battlemap window.")
         elif message.command == "grid":
             action, scale = message.arg
             # Grid visibility targets the primary view. A mirror would need an

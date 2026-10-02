@@ -64,7 +64,7 @@ class AudiowindowFeature(FeatureBase):
             help_text="fullscreen — fill the monitor the window sits on.")
         services.register_command(
             "restore", self._do_restore,
-            help_text="restore — return the window to its default size.")
+            help_text="restore — default size; also reopens the window if it was closed.")
         services.register_command(
             "minimize", self._do_minimize,
             help_text="minimize — iconify the window.")
@@ -140,8 +140,8 @@ class AudiowindowFeature(FeatureBase):
             monitor = window.fullscreen()
             print(f"[+] Fullscreen on monitor {monitor}")
         elif message.command == "restore":
-            window.restore()
-            print("[+] Restored window.")
+            reopened = window.restore()
+            print("[+] Reopened the window." if reopened else "[+] Restored window.")
         elif message.command == "minimize":
             window.minimize()
             print("[+] Minimized window.")

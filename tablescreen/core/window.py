@@ -223,17 +223,26 @@ class Window:
         self.toplevel.update_idletasks()
         self._notify_geometry_change()
 
-    def restore(self) -> None:
-        """Return to the default windowed size."""
+    def restore(self) -> bool:
+        """Return to the default windowed size, bringing the window back if it
+        was closed (X) or minimised. Returns True if it had been closed."""
+        was_closed = self.is_closed
         self.toplevel.overrideredirect(False)
         try:
             self.toplevel.attributes("-fullscreen", False)
         except tk.TclError:
             pass
-        self.toplevel.deiconify()
+        self.toplevel.state("normal")       # un-withdraws and un-iconifies
         self.toplevel.geometry(self._default_geometry)
+        self.toplevel.lift()                # back in front, not behind others
         self._is_fullscreen = False
         self._notify_geometry_change()
+        return was_closed
+
+    @property
+    def is_closed(self) -> bool:
+        """Hidden via the X button (withdrawn), as opposed to minimised."""
+        return self.toplevel.state() == "withdrawn"
 
     def minimize(self) -> None:
         """Iconify. A borderless window must be restored first, or it cannot
