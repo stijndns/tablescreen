@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import tkinter as tk
 from typing import TYPE_CHECKING
@@ -5,10 +7,11 @@ from typing import TYPE_CHECKING
 from PIL import ImageTk, Image
 
 from .styling import *
-from ..combat import Type, Status
+from ..model import Type, Status
+from ....core.paths import COMBATANT_IMAGES_DIR
 
 if TYPE_CHECKING:
-    from ..combat import Combatant
+    from ..model import Combatant
 
 INITIATIVE_W    = 52
 class CombatantView(tk.Canvas):
@@ -225,8 +228,8 @@ class CombatantView(tk.Canvas):
         if cache_key in self._image_cache:
             return self._image_cache[cache_key]
 
-        path = os.path.join("assets", "images", "combatants", filename)
-        if not os.path.exists(path):
+        path = COMBATANT_IMAGES_DIR / filename
+        if not path.exists():
             return None
 
         try:

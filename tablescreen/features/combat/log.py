@@ -1,5 +1,6 @@
-﻿import os
 from datetime import datetime
+
+from ...core.paths import LOGS_DIR, ensure_dir
 
 class CombatLog:
     """ ── Combat log helpers ───────────────────────────────────────────────────"""
@@ -50,7 +51,7 @@ class CombatLog:
                 yield entry
                 yield "\n"
 
-        os.makedirs("logs", exist_ok=True)
+        ensure_dir(LOGS_DIR)
         if len(parts) >= 2:
             filename = parts[1]
             if not filename.endswith(".txt"):
@@ -59,7 +60,7 @@ class CombatLog:
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             filename = f"combat_log_{timestamp}.txt"
 
-        filepath = os.path.join("logs", filename)
+        filepath = LOGS_DIR / filename
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 f.writelines(entry_lines())

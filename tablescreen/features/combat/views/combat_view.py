@@ -9,17 +9,16 @@ import tkinter as tk
 import math
 
 from .styling import *
-from ..combat import Combatant, Type
+from ..model import Combatant, Type
 from .combatant_view import CombatantView
 from typing import Tuple
 
 class CombatView(tk.Frame):
-    """Draws the combat tracker directly onto the Tk Frame which will be shown in the full root.
-    The view starts hidden. Call show() to make it render.
-    """
+    """The combat tracker, drawn into a content slot's frame. The feature
+    packs it and shows the slot; render(snapshot, page) redraws it."""
 
-    def __init__(self, root: tk.Tk):
-        super().__init__(root, bg=PALETTE["bg"])
+    def __init__(self, parent: tk.Widget):
+        super().__init__(parent, bg=PALETTE["bg"])
         self._snapshot: dict | None = None
         self._page: int = 0          # 0-based current page index
         self._image_cache: dict = {}
