@@ -179,3 +179,6 @@ pyrightconfig.json
 ### Tablescreen ###
 # Animated battlemaps are large; keep them out of the repo.
 *.webm
+# Combat logs are session output, not source.
+logs/*
+!logs/.gitkeep
