@@ -49,6 +49,7 @@ class Combatant:
     initiative: int
     hp_current: int
     hp_max: int
+    temp_hp: int = 0             # buffer that absorbs damage before HP (5e)
     resources: dict[str, Resource] = field(default_factory=dict)   # name → Resource
     conditions: list = field(default_factory=list)  # free-form condition strings
     status: Status = Status.ACTIVE
@@ -75,6 +76,36 @@ class Combatant:
 
     def set_hp(self, value: int) -> str:
         return self.adjust_hp(value - self.hp_current)
+
+    def take_damage(self, amount: int) -> str:
+        """Damage from any source: temp HP absorbs it first, the rest hits HP.
+        ``adjust_hp`` stays the raw change used for healing and exact sets."""
+        absorbed = min(self.temp_hp, max(0, amount))
+        self.temp_hp -= absorbed
+        if absorbed == 0:
+            return self.adjust_hp(-amount)
+        hp_part = self.adjust_hp(-(amount - absorbed)) if amount > absorbed else (
+            f"HP unchanged at {self.hp_current}/{self.hp_max}")
+        return (f"{self.name}: {amount} damage, {absorbed} absorbed by temp HP "
+                f"({self.temp_hp} left); {hp_part}")
+
+    # ── Temporary HP ─────────────────────────────────────────────────────────
+
+    def grant_temp_hp(self, amount: int) -> str:
+        """Temp HP don't stack (5e): keep whichever is higher."""
+        if amount <= self.temp_hp:
+            return (f"{self.name} keeps {self.temp_hp} temp HP "
+                    f"(new {amount} is not higher; temp HP don't stack)")
+        before, self.temp_hp = self.temp_hp, amount
+        return f"{self.name} temp HP: {before} → {self.temp_hp}"
+
+    def set_temp_hp(self, value: int) -> str:
+        before, self.temp_hp = self.temp_hp, max(0, value)
+        return f"{self.name} temp HP: {before} → {self.temp_hp}"
+
+    def reduce_temp_hp(self, amount: int) -> str:
+        """Lower the buffer only, stopping at 0; never spills into HP."""
+        return self.set_temp_hp(self.temp_hp - amount)
 
     @property
     def hp_bar_state(self) -> str:
@@ -166,6 +197,7 @@ class Combatant:
             f"{self.name:<20s} "
             f"Init:{self.initiative:>3}  "
             f"HP:{self.hp_current:>4}/{self.hp_max:<4}"
+            + (f" +{self.temp_hp} temp" if self.temp_hp else "")
             + (f"  {res_str}" if res_str else "")
             + (f"  [{cond_str}]" if cond_str else "")
             + status

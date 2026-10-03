@@ -62,6 +62,11 @@ Shorthand commands (usable outside 'combat ...'):
   next                        — advance to next turn (resets current combatant's reaction)
   hp <name> <±amount>         — adjust HP:  hp Aria -15   hp Goblin-A +5
   hp <name> = <amount>        — set HP to exact value:  hp Aria = 80
+                                (damage with -amount is absorbed by temp HP first;
+                                 healing and '=' leave temp HP alone)
+  temphp <name> <amount>      — grant temp HP; the higher of old and new is kept
+  temphp <name> -<amount>     — lower temp HP only (stops at 0, never touches HP)
+  temphp <name> = <amount>    — set temp HP exactly (0 removes it)
 
   resource add <name> <res> <max>    — add/replace a resource slot
                                        e.g.  resource add Aria "Spell Slots 9th" 1
@@ -306,7 +311,7 @@ class CombatCommandsMixin:
                 return
             if action_type == "damage":
                 damage_type = rest[1] if len(rest) > 1 else None
-                message = target.adjust_hp(-amount)
+                message = target.take_damage(amount)
                 suffix = f" {damage_type}" if damage_type else ""
                 print(f"[+] {actor_name} → damage → {target_name}: "
                       f"{amount}{suffix}  ({message})")
@@ -402,9 +407,11 @@ class CombatCommandsMixin:
 
         try:
             if parts[1] == "=" and len(parts) >= 3:
-                message = combatant.set_hp(int(parts[2]))
+                message = combatant.set_hp(int(parts[2]))      # exact, bypasses temp HP
+            elif int(parts[1]) < 0:
+                message = combatant.take_damage(-int(parts[1]))   # temp HP first
             else:
-                message = combatant.adjust_hp(int(parts[1]))
+                message = combatant.adjust_hp(int(parts[1]))   # healing
         except ValueError:
             print("[!] Amount must be an integer (e.g. -15, +8, 42).")
             return
@@ -412,6 +419,31 @@ class CombatCommandsMixin:
         print(f"[+] {message}")
         prompts.apply_zero_hp_status(combatant, self.log)
         self.log.log_entry(f"[hp] {message}")
+        self.refresh_views()
+
+    def do_temphp(self, arg: str) -> None:
+        """Admin control of the temp HP buffer; damage goes through `hp -N`."""
+        parts = get_arg_parts(arg)
+        usage = "Usage: temphp <name> <amount> | temphp <name> -<amount> | temphp <name> = <amount>"
+        if len(parts) < 2:
+            print(usage)
+            return
+        combatant = self.combat.get(parts[0])
+        if combatant is None:
+            print(f"[!] Combatant '{parts[0]}' not found.")
+            return
+        try:
+            if parts[1] == "=" and len(parts) >= 3:
+                message = combatant.set_temp_hp(int(parts[2]))
+            elif parts[1].startswith("-"):
+                message = combatant.reduce_temp_hp(-int(parts[1]))
+            else:
+                message = combatant.grant_temp_hp(int(parts[1]))
+        except ValueError:
+            print(f"[!] Amount must be an integer. {usage}")
+            return
+        print(f"[+] {message}")
+        self.log.log_entry(f"[temphp] {message}")
         self.refresh_views()
 
     def do_maxhp(self, arg: str) -> None:
@@ -627,6 +659,9 @@ class CombatCommandsMixin:
         return self._names(text)
 
     def complete_maxhp(self, text, line, begidx, endidx) -> list[str]:
+        return self._names(text)
+
+    def complete_temphp(self, text, line, begidx, endidx) -> list[str]:
         return self._names(text)
 
     def complete_next(self, text, line, begidx, endidx) -> list[str]:

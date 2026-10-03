@@ -50,6 +50,9 @@ def export_combatants(combat: Combat, filename: str) -> None:
             "name": c.name,
             "type": c.type,
             "hp_max": c.hp_max,
+            # Starting temp HP. Export is refused during combat, so the current
+            # value is the starting value; "max" mirrors hp_max, it isn't a cap.
+            "temp_hp_max": c.temp_hp,
             "image": c.image,
             "resources": [
                 {"name": r.name, "maximum": r.maximum}
@@ -118,6 +121,12 @@ def import_combatants(combat: Combat, filename: str) -> bool:
 
         for resource in entry.get("resources", []):
             combatant.add_resource(resource["name"], resource["maximum"])
+
+        temp_hp = entry.get("temp_hp_max", 0)      # optional; older files lack it
+        if isinstance(temp_hp, int) and not isinstance(temp_hp, bool) and temp_hp >= 0:
+            combatant.temp_hp = temp_hp
+        else:
+            print(f"  [!] Invalid temp_hp_max for {name}: {temp_hp!r} (using 0)")
 
         image = entry.get("image")
         if image:

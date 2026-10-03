@@ -63,7 +63,11 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
             help_text="next — advance to the next combatant's turn.")
         services.register_command(
             "hp", self.do_hp, self.complete_hp,
-            help_text="hp <name> <±amount> | hp <name> = <amount> — adjust HP.")
+            help_text="hp <name> <±amount> | hp <name> = <amount> — adjust HP "
+                      "(damage hits temp HP first).")
+        services.register_command(
+            "temphp", self.do_temphp, self.complete_temphp,
+            help_text="temphp <name> <amount> | -<amount> | = <amount> — manage temp HP.")
         services.register_command(
             "maxhp", self.do_maxhp, self.complete_maxhp,
             help_text="maxhp <name> <new_max> — change maximum HP.")

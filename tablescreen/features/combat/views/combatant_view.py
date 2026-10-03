@@ -162,6 +162,8 @@ class CombatantView(tk.Canvas):
         # HP / status (aligned to name_y on right side)
         if self.combatant.type is Type.PC:
             hp_str   = f"{self.combatant.hp_current}/{self.combatant.hp_max} HP"
+            if self.combatant.temp_hp:
+                hp_str += f" +{self.combatant.temp_hp}"   # NPC/monster temp HP stays hidden
             hp_color = PALETTE["text_primary"] if not is_dimmed else PALETTE["text_dim"]
             self.create_text(x_right - inner_pad, name_y,
                 text=hp_str, fill=hp_color,

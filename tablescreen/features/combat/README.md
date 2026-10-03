@@ -46,11 +46,25 @@ Combatants are listed in initiative order, six per page, with the active one hig
 ## Hit points and statuses
 
 ```
-hp Goblin-A -6        damage
+hp Goblin-A -6        damage (temporary hit points absorb it first)
 hp Aria +8            healing
 hp Aria = 30          set to an exact value
 maxhp Aria 60         change maximum hit points
 ```
+
+### Temporary hit points
+
+Temporary hit points are a separate buffer that absorbs damage before actual hit points do. Damage from any source goes through it: `hp <name> -<amount>` and damage recorded with `combat action` both reduce temporary hit points first and only apply the remainder to hit points. Healing (`hp <name> +<amount>`) and setting hit points exactly (`hp <name> = <amount>`) leave temporary hit points alone.
+
+```
+temphp Aria 8         grant 8 temporary hit points
+temphp Aria -3        lower the buffer by 3 (stops at 0, never touches hit points)
+temphp Aria = 0       set exactly; 0 removes them
+```
+
+Following the 5e rules, temporary hit points do not stack: a grant only takes effect when it is higher than the current amount. `temphp <name> = <amount>` overrides that when needed. `temphp` only manages the buffer; damage that should spill over into hit points is entered with `hp <name> -<amount>`.
+
+The combat screen shows temporary hit points of player characters next to their hit points (`23/30 HP +6`). For NPCs and monsters, they are not shown to the players.
 
 When a combatant drops to 0 hit points, the shell asks whether they are dead, dying or incapacitated. A dying combatant who takes more damage can be marked dead or stay dying. A dying or incapacitated combatant who is healed above 0 becomes active again; a dead one stays dead, even when healed. There is currently no command to change a status directly.
 
@@ -92,6 +106,8 @@ condition list Brann
 
 `combat export <name>` saves the current combatants to `combatants/<name>.json`, and `combat import <name>` loads them again. This is useful for preparing encounters in advance or keeping a party roster.
 
+A roster file stores each combatant's definition rather than their state in a particular fight: name, type, `hp_max`, portrait, resource maxima, and `temp_hp_max`, the temporary hit points the combatant starts an encounter with. `temp_hp_max` is optional and defaults to 0, so older files still load. Despite the name, it is a starting amount, not a cap; the name only mirrors `hp_max`.
+
 Everything that happens during combat is recorded in a log. `combat log` prints it; `combat log save [name]` writes it to `logs/`, using a timestamp when no name is given. Starting combat begins a new log.
 
 ## Command reference
@@ -115,13 +131,14 @@ Everything that happens during combat is recorded in a log. `combat log` prints 
 | `next` | Next turn |
 | `hp <name> <±amount>` / `hp <name> = <amount>` | Change hit points |
 | `maxhp <name> <amount>` | Change maximum hit points |
+| `temphp <name> <amount>` / `-<amount>` / `= <amount>` | Grant (higher wins), lower or set temporary hit points |
 | `resource add <name> <resource> <max>` | Add a resource |
 | `resource <name> <resource> <±amount>` | Change a resource |
 | `resource reset <name>` / `resource list <name>` | Refill or list one combatant's resources |
 | `condition add` / `remove` / `list <name> [condition]` | Manage conditions |
 | `page next` / `prev` / `<number>` | Switch pages on the combat screen |
 
-The shortcuts (`next`, `hp`, `maxhp`, `resource`, `condition` and `page`) are currently top-level commands. Requiring a `combat` prefix for them is being considered, to avoid clashes with future features.
+The shortcuts (`next`, `hp`, `temphp`, `maxhp`, `resource`, `condition` and `page`) are currently top-level commands. Requiring a `combat` prefix for them is being considered, to avoid clashes with future features.
 
 ## Files
 
