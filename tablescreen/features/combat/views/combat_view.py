@@ -75,11 +75,8 @@ class CombatView(tk.Frame):
         self._page = max(0, min(self._page, pages - 1))
 
     def _ordered_entries(self) -> list:
-        """All combatants in initiative order, with pending/left_combat/unacted monsters at bottom."""
-        combatants = self._snapshot["combatants"] if self._snapshot is not None else []
-        in_order = [c for c in combatants if c.is_in_combat() and not c.hidden_initiative()]
-        bottom   = [c for c in combatants if not c.is_in_combat() or c.hidden_initiative()]
-        return in_order + bottom
+        """All combatants, already in display order (Combat.display_order)."""
+        return self._snapshot["combatants"] if self._snapshot is not None else []
 
     def _page_entries(self) -> list:
         entries = self._ordered_entries()
@@ -140,7 +137,7 @@ class CombatView(tk.Frame):
             if combatant_view.is_unrevealed():
                 combatant_view.draw_unrevealed_row()
             else:
-                combatant_view.draw_row(self._snapshot["current_index"] - self._page * MIN_PAGE_SIZE == index)
+                combatant_view.draw_row(combatant.name == self._snapshot["current"])
 
         for index in range(len(entries), len(self.view_cache)):
             self.view_cache[index].grid_remove()

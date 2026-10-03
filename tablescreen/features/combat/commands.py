@@ -25,7 +25,7 @@ from PIL import Image
 from ...core.completion import get_arg_parts, tab_completion
 from ...core.paths import COMBATANT_IMAGES_DIR, COMBATANTS_DIR
 from . import persistence, prompts
-from .model import Combatant, Type
+from .model import Type
 from .views.styling import MIN_PAGE_SIZE
 
 CURRENT_OS = platform.system()
@@ -378,19 +378,12 @@ class CombatCommandsMixin:
 
     def _page_of_current(self) -> int | None:
         """Page index holding the current combatant, so the view can follow
-        the turn across page boundaries."""
+        the turn across page boundaries. Uses the same order as the screen."""
         current = self.combat.current_combatant()
         if current is None:
             return None
-        combatants: list[Combatant] = self.combat.snapshot()["combatants"]
-        revealed = [c for c in combatants
-                    if not c.pending and (c.type is Type.MONSTER or c.has_acted)]
-        unrevealed = [c for c in combatants
-                      if c.pending or (c.type is Type.MONSTER and not c.has_acted)]
-        for index, entry in enumerate(revealed + unrevealed):
-            if entry.name == current.name:
-                return index // MIN_PAGE_SIZE
-        return None
+        names = [c.name for c in self.combat.display_order()]
+        return names.index(current.name) // MIN_PAGE_SIZE
 
     # ── hp ────────────────────────────────────────────────────────────────
 

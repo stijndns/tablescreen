@@ -30,11 +30,8 @@ class CombatantView(tk.Canvas):
 
     # ── helper functions───────────────────────────────────────────────────────
     def is_unrevealed(self) -> bool:
-        """Return True if this self.combatant should be rendered via _draw_unrevealed_row."""
-        return (self.combatant.pending
-                or self.combatant.left_combat
-                #or self.combatant.status in (Status.DEAD, Status.INCAPACITATED)
-                or (self.combatant.type is Type.MONSTER and not self.combatant.has_acted))
+        """Drawn greyed via draw_unrevealed_row (see Combatant.is_revealed)."""
+        return not self.combatant.is_revealed()
 
     @property
     def padding(self) -> int:
@@ -96,7 +93,7 @@ class CombatantView(tk.Canvas):
 
     def _create_initiative(self, is_current: bool, is_dimmed: bool):
         init_color = PALETTE["current_glow"] if is_current else (PALETTE["text_dim"] if is_dimmed else PALETTE["text_primary"])
-        hidden = self.combatant.type is Type.MONSTER and not self.combatant.has_acted
+        hidden = self.combatant.hidden_initiative()
         init_text = "?" if hidden else str(self.combatant.initiative)
         self.create_text(self.init_col_w // 2, self.row_h // 2,
             text=init_text, fill=init_color,

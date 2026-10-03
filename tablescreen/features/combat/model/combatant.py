@@ -174,6 +174,11 @@ class Combatant:
     def hidden_initiative(self) -> bool:
         return self.type is Type.MONSTER and not self.has_acted
 
+    def is_revealed(self) -> bool:
+        """Shown in full at its place in the turn order on the player screen.
+        Pending, left and not-yet-acted monsters are listed greyed at the bottom."""
+        return self.is_in_combat() and not self.hidden_initiative()
+
     # ── Display helpers ──────────────────────────────────────────────────────
 
     def summary(self) -> str:
