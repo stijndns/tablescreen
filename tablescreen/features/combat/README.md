@@ -55,6 +55,17 @@ text_scale = 1.0            # 0.25 to 4; 1.5 makes all text and rows half as lar
 
 A larger `text_scale` means fewer combatants per page.
 
+### Two columns
+
+`combat layout double` shows the combatants in two columns, which doubles the number per page. The order runs down the left column first and then continues at the top of the right column. `combat layout single` returns to one column, and `combat layout` on its own prints the current layout and how many combatants fit per page. The default comes from the configuration:
+
+```toml
+[features.combat]
+layout = "single"           # single | double
+```
+
+In two columns the rows are half as wide. Text that no longer fits (a long name, a long list of resources or conditions) is shortened with "…", and a warning is printed in the shell once for each shortened text. A name keeps its status tag such as `[DEAD]`; only the name itself is shortened. A wider window, a smaller `text_scale` or the single layout avoids shortening.
+
 ## Hit points and statuses
 
 ```
@@ -149,6 +160,7 @@ Everything that happens during combat is recorded in a log. `combat log` prints 
 | `resource reset <name>` / `resource list <name>` | Refill or list one combatant's resources |
 | `condition add` / `remove` / `list <name> [condition]` | Manage conditions |
 | `page next` / `prev` / `<number>` | Switch pages on the combat screen |
+| `combat layout` / `single` / `double` | Print or set the number of columns on the combat screen |
 
 The shortcuts (`next`, `hp`, `temphp`, `maxhp`, `resource`, `condition` and `page`) are currently top-level commands. Requiring a `combat` prefix for them is being considered, to avoid clashes with future features.
 

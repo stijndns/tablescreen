@@ -24,7 +24,7 @@ from .commands import CombatCommandsMixin
 from .log import CombatLog
 from .model import Combat
 from .views.combat_view import FOLLOW_CURRENT, CombatView
-from .views.layout import parse_text_scale
+from .views.layout import LAYOUTS, parse_layout, parse_text_scale
 
 
 class CombatFeature(CombatCommandsMixin, FeatureBase):
@@ -49,10 +49,13 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
         text_scale, warning = parse_text_scale(services.config.get("text_scale", 1.0))
         if warning:
             print(f"[!] combat: {warning}")
+        layout, warning = parse_layout(services.config.get("layout", "single"))
+        if warning:
+            print(f"[!] combat: {warning}")
 
         window_name = services.window_name()
         self.slot = services.slot(window_name)
-        view = CombatView(self.slot.frame, text_scale)
+        view = CombatView(self.slot.frame, text_scale, LAYOUTS[layout])
         view.pack(fill="both", expand=True)
         self.views.append(view)
 
@@ -119,6 +122,17 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
 
         elif command == "update":
             self._render(page=message.arg)
+
+        elif command == "layout":
+            # Per-view setting, so it targets the primary view (like paging).
+            if self.views:
+                view = self.views[0]
+                if message.arg is not None:
+                    view.set_columns(LAYOUTS[message.arg])
+                layout = view.layout
+                fit = (f": {layout.columns} × {layout.rows} = {layout.page_size} per page"
+                       if layout else "")
+                print(f"[+] Combat layout: {view.layout_name}{fit}.")
 
         # Paging targets the primary view. With a mirror this would need an
         # explicit target so the DM could page independently.

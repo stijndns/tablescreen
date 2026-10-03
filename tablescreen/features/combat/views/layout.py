@@ -11,7 +11,7 @@ fit their text; the window height only decides how many rows fit on a page.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from .styling import COND_EXTRA, PADDING, ROW_HEIGHT_BASE
 
@@ -23,6 +23,10 @@ MIN_ROW_H = 30
 
 DEFAULT_TEXT_SCALE = 1.0
 TEXT_SCALE_RANGE = (0.25, 4.0)
+
+LAYOUTS = {"single": 1, "double": 2}       # name → number of columns
+DEFAULT_LAYOUT = "single"
+ELLIPSIS = "…"
 
 
 def text_unit(pixels_per_inch: float, text_scale: float) -> float:
@@ -63,6 +67,35 @@ def page_of(names: Sequence[str], name: Optional[str], page_size: int) -> Option
     if name is None or name not in names:
         return None
     return list(names).index(name) // page_size
+
+
+def grid_cell(index: int, rows: int) -> tuple[int, int]:
+    """(row, column) of the index-th combatant on a page: down the first
+    column, then down the next. Row 0 is the first combatant row."""
+    return index % rows, index // rows
+
+
+def fit_text(text: str, max_px: float, measure: Callable[[str], float]) -> str:
+    """``text`` unchanged if it fits in ``max_px``, else the longest prefix
+    that fits with an ellipsis appended (just the ellipsis if nothing does)."""
+    if measure(text) <= max_px:
+        return text
+    low, high = 0, len(text)                # binary search on the prefix length
+    while low < high:
+        mid = (low + high + 1) // 2
+        if measure(text[:mid].rstrip() + ELLIPSIS) <= max_px:
+            low = mid
+        else:
+            high = mid - 1
+    return text[:low].rstrip() + ELLIPSIS
+
+
+def parse_layout(value) -> tuple[str, Optional[str]]:
+    """layout from config: (name, warning or None)."""
+    if isinstance(value, str) and value.strip().lower() in LAYOUTS:
+        return value.strip().lower(), None
+    return DEFAULT_LAYOUT, (f"layout must be one of {', '.join(LAYOUTS)}, "
+                            f"got {value!r}; using {DEFAULT_LAYOUT}.")
 
 
 def parse_text_scale(value) -> tuple[float, Optional[str]]:

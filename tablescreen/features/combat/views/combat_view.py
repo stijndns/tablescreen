@@ -13,7 +13,8 @@ import math
 from .styling import *
 from ..model import Combatant
 from .combatant_view import CombatantView
-from .layout import DEFAULT_TEXT_SCALE, Layout, compute_layout, page_of, text_unit
+from .layout import (DEFAULT_TEXT_SCALE, LAYOUTS, Layout, compute_layout, grid_cell,
+                     page_of, text_unit)
 from typing import Optional, Tuple
 
 # render(snapshot, page=FOLLOW_CURRENT): show the page with the active combatant.
@@ -25,19 +26,22 @@ class CombatView(tk.Frame):
     """The combat tracker, drawn into a content slot's frame. The feature
     packs it and shows the slot; render(snapshot, page) redraws it."""
 
-    def __init__(self, parent: tk.Widget, text_scale: float = DEFAULT_TEXT_SCALE):
+    def __init__(self, parent: tk.Widget, text_scale: float = DEFAULT_TEXT_SCALE,
+                 columns: int = 1):
         super().__init__(parent, bg=PALETTE["bg"])
         self._snapshot: dict | None = None
         self._page: int = 0          # 0-based current page index
         self._follow_pending = False
         self._text_scale = text_scale
+        self._columns = columns
         self.layout: Optional[Layout] = None
+        self._warned: set[tuple] = set()    # shortened texts already reported
         self._image_cache: dict = {}
         self.bind("<Configure>", lambda e: self._redraw((e.width, e.height)))
-        # Grid layout: header in row 0, combatant i in row i + 1. Stretch the
-        # column to the full width and keep the rows at the top (grid would
-        # otherwise centre them vertically, unlike pack).
-        self.columnconfigure(0, weight=1)
+        # Grid layout: header in row 0 across all columns, combatants below,
+        # down the first column and then the next (layout.grid_cell). Keep
+        # everything at the top (grid would otherwise centre it vertically).
+        self._configure_columns()
         self.grid_anchor("n")
         self.view_cache: list[CombatantView] = []
         self.header = None
@@ -46,6 +50,17 @@ class CombatView(tk.Frame):
         self.scale = 0
 
     # ── Public API ────────────────────────────────────────────────────────────
+
+    @property
+    def layout_name(self) -> str:
+        return next(name for name, cols in LAYOUTS.items() if cols == self._columns)
+
+    def set_columns(self, columns: int):
+        """Switch between one and two columns; keeps the active combatant in view."""
+        self._columns = columns
+        self._configure_columns()
+        self.resize()
+        self._redraw()
 
     def render(self, snapshot: dict, page: int | str | None = None):
         """Update the snapshot, optionally go to a page (or FOLLOW_CURRENT), redraw."""
@@ -76,6 +91,22 @@ class CombatView(tk.Frame):
 
     def _page_count(self) -> int:
         return max(1, math.ceil(len(self._ordered_entries()) / self._page_size()))
+
+    def _configure_columns(self):
+        """Equal-width columns for the active layout; unused ones collapse."""
+        for column in range(max(LAYOUTS.values())):
+            used = column < self._columns
+            self.columnconfigure(column, weight=1 if used else 0,
+                                 uniform="combatants" if used else "")
+
+    def _report_shortened(self, name: str, field: str, text: str):
+        """Warn once per shortened text and layout; the user wants to avoid it."""
+        key = (name, field, text, self.layout)
+        if key in self._warned:
+            return
+        self._warned.add(key)
+        print(f"[!] combat: shortened {name}'s {field} to fit the combat screen: {text!r}. "
+              f"A wider window, a smaller text_scale or the single layout avoids this.")
 
     def _resolve_page(self):
         """Apply a pending FOLLOW_CURRENT, then keep the page in range."""
@@ -118,7 +149,7 @@ class CombatView(tk.Frame):
         first_visible = self._page * old.page_size if old else 0
         current_visible = (self._snapshot is not None and old is not None and
                            self._snapshot["current"] in [c.name for c in self._page_entries()])
-        self.layout = compute_layout(self.W, self.H, unit)
+        self.layout = compute_layout(self.W, self.H, unit, self._columns)
         self.scale = unit
         # Keep the active combatant on screen if it was; otherwise keep the
         # combatant that was at the top of the page.
@@ -126,11 +157,6 @@ class CombatView(tk.Frame):
             self._follow_pending = True
         else:
             self._page = first_visible // self.layout.page_size
-        gap = self.layout.gap
-        for index, combatant_view in enumerate(self.view_cache, 0):
-            if combatant_view.winfo_ismapped():
-                combatant_view.grid_configure(pady=((gap * 2 if index == 0 else gap), 2),
-                                              padx=self.layout.pad)
 
     def _draw(self):
         assert self._snapshot is not None and self.layout is not None
@@ -142,20 +168,25 @@ class CombatView(tk.Frame):
         self._draw_header(self._snapshot, self.W, layout.header_h, layout.pad,
                           self._page + 1, pages)
 
-        gap = layout.gap
+        gap, pad = layout.gap, layout.pad
         combatant: Combatant
         for index, combatant in enumerate(entries, 0):
             if len(self.view_cache) <= index:
                 combatant_view = CombatantView(self, combatant, self._image_cache,
-                                               self.scale, layout.row_h)
+                                               self.scale, layout.row_h,
+                                               on_shortened=self._report_shortened)
                 self.view_cache.append(combatant_view)
             else:
                 combatant_view = self.view_cache[index]
                 combatant_view.update_config(self.scale, layout.row_h)
-            if not combatant_view.winfo_ismapped():
-                combatant_view.grid(row=index + 1, column=0, sticky="ew",
-                                    pady=((gap * 2 if index == 0 else gap), 2),
-                                    padx=layout.pad)
+            # (Re)placed on every draw, so a layout switch moves every row.
+            row, column = grid_cell(index, layout.rows)
+            if layout.columns == 1:
+                padx = pad
+            else:   # outer margin pad, gutter between the columns also pad
+                padx = (pad, pad // 2) if column == 0 else (pad // 2, pad)
+            combatant_view.grid(row=row + 1, column=column, sticky="ew",
+                                pady=((gap * 2 if row == 0 else gap), 2), padx=padx)
 
         # update all sizes of widgets so the canvas can correctly allign on right side
         self.update_idletasks()
@@ -180,7 +211,7 @@ class CombatView(tk.Frame):
         if self.header is None:
             c = tk.Canvas(self, bg=PALETTE["surface"], bd=0, highlightthickness=0, height=header_h)
             self.header = c
-            c.grid(row=0, column=0, sticky="ew")
+            c.grid(row=0, column=0, columnspan=max(LAYOUTS.values()), sticky="ew")
         else:
             c = self.header
             c.delete('all')

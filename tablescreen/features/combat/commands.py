@@ -26,6 +26,7 @@ from ...core.completion import get_arg_parts, tab_completion
 from ...core.paths import COMBATANT_IMAGES_DIR, COMBATANTS_DIR
 from . import persistence, prompts
 from .model import Type
+from .views.layout import LAYOUTS
 
 CURRENT_OS = platform.system()
 
@@ -56,6 +57,9 @@ Combat tracker commands:
   combat log                                  — print combat log to shell
   combat log save [filename]                  — save combat log to logs/<filename>.txt
   combat show                                 — restore combat view after showing an image
+  combat layout                               — show the current layout
+  combat layout single | double               — one column, or two (down the left
+                                                column first, then the right)
 
 Shorthand commands (usable outside 'combat ...'):
   next                        — advance to next turn (resets current combatant's reaction)
@@ -132,6 +136,12 @@ class CombatCommandsMixin:
             else:
                 self.show_combat_view()
                 print("[+] Combat view restored.")
+        elif sub == "layout":
+            choice = rest[0].lower() if rest else None
+            if choice is not None and choice not in LAYOUTS:
+                print(f"Usage: combat layout [{' | '.join(LAYOUTS)}]")
+            else:
+                self.services.send(self.name, "layout", choice)   # None = report only
         elif sub == "noreaction":
             self._next_no_reaction = True
             print("[i] Next 'combat add' will not get a Reaction slot.")
@@ -596,7 +606,7 @@ class CombatCommandsMixin:
         parts = get_arg_parts(line[:begidx])
         top_subs = ["new", "add", "start", "status", "end", "show", "screen",
                     "noreaction", "reset", "legendary", "action", "log",
-                    "export", "import", "image", "remove"]
+                    "export", "import", "image", "remove", "layout"]
 
         if len(parts) == 1:
             return [s for s in top_subs if s.startswith(text)]
@@ -612,6 +622,9 @@ class CombatCommandsMixin:
 
         if sub == "remove":
             return self._names(text) if len(parts) == 2 else []
+
+        if sub == "layout":
+            return [s for s in LAYOUTS if s.startswith(text)] if len(parts) == 2 else []
 
         if sub == "image":
             if len(parts) == 2:
