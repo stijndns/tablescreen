@@ -15,16 +15,17 @@ if TYPE_CHECKING:
 
 INITIATIVE_W    = 52
 class CombatantView(tk.Canvas):
-    def __init__(self, parent: tk.Widget, combatant: Combatant, img_cache: dict, scale: float):
+    def __init__(self, parent: tk.Widget, combatant: Combatant, img_cache: dict,
+                 scale: float, row_h: int):
         self._scale = scale
-        self.row_h = max(30, int((ROW_HEIGHT_BASE + COND_EXTRA) * self._scale))
+        self.row_h = row_h          # from layout.compute_layout
         super().__init__(parent, bg=PALETTE["bg"], highlightthickness=0, bd=0, height=self.row_h+2) # max border width extra needed
         self.combatant = combatant
         self._image_cache = img_cache
 
-    def update_config(self, scale: float):
+    def update_config(self, scale: float, row_h: int):
         self._scale = scale
-        self.row_h = max(30, int((ROW_HEIGHT_BASE + COND_EXTRA) * self._scale))
+        self.row_h = row_h
         if self.config("height") != self.row_h + 2:
             self.configure(height=self.row_h+2)
 
@@ -32,10 +33,6 @@ class CombatantView(tk.Canvas):
     def is_unrevealed(self) -> bool:
         """Drawn greyed via draw_unrevealed_row (see Combatant.is_revealed)."""
         return not self.combatant.is_revealed()
-
-    @property
-    def padding(self) -> int:
-        return int(self._scale * PADDING)
 
     @property
     def inner_padding(self) -> int:

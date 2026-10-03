@@ -83,6 +83,7 @@ window = "mainscreen"
 
 [features.combat]
 window = "mainscreen"
+text_scale = 1.0            # size of the combat screen's text (and so its rows)
 
 [features.battlemap]
 window = "battlemap"

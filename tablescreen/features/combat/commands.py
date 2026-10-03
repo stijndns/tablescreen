@@ -26,7 +26,6 @@ from ...core.completion import get_arg_parts, tab_completion
 from ...core.paths import COMBATANT_IMAGES_DIR, COMBATANTS_DIR
 from . import persistence, prompts
 from .model import Type
-from .views.styling import MIN_PAGE_SIZE
 
 CURRENT_OS = platform.system()
 
@@ -374,16 +373,7 @@ class CombatCommandsMixin:
             if current:
                 self.log.log_turn_marker(current.name, self.combat.round,
                                          new_round=new_round)
-            self.refresh_views(page=self._page_of_current())
-
-    def _page_of_current(self) -> int | None:
-        """Page index holding the current combatant, so the view can follow
-        the turn across page boundaries. Uses the same order as the screen."""
-        current = self.combat.current_combatant()
-        if current is None:
-            return None
-        names = [c.name for c in self.combat.display_order()]
-        return names.index(current.name) // MIN_PAGE_SIZE
+            self.refresh_views(follow_current=True)
 
     # ── hp ────────────────────────────────────────────────────────────────
 

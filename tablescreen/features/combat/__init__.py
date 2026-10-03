@@ -23,7 +23,8 @@ from ...core.feature import FeatureBase, ShellServices
 from .commands import CombatCommandsMixin
 from .log import CombatLog
 from .model import Combat
-from .views.combat_view import CombatView
+from .views.combat_view import FOLLOW_CURRENT, CombatView
+from .views.layout import parse_text_scale
 
 
 class CombatFeature(CombatCommandsMixin, FeatureBase):
@@ -45,9 +46,13 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
     def build(self, services: ShellServices) -> None:
         self.services = services
 
+        text_scale, warning = parse_text_scale(services.config.get("text_scale", 1.0))
+        if warning:
+            print(f"[!] combat: {warning}")
+
         window_name = services.window_name()
         self.slot = services.slot(window_name)
-        view = CombatView(self.slot.frame)
+        view = CombatView(self.slot.frame, text_scale)
         view.pack(fill="both", expand=True)
         self.views.append(view)
 
@@ -88,9 +93,11 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
 
     # ── Called from commands (shell thread) ───────────────────────────────
 
-    def refresh_views(self, page: int | None = None) -> None:
-        """Ask the mainloop to redraw. Safe from the shell thread."""
-        self.services.send(self.name, "update", page)
+    def refresh_views(self, page: int | None = None, follow_current: bool = False) -> None:
+        """Ask the mainloop to redraw. Safe from the shell thread.
+        follow_current: show the active combatant's page (only the view knows
+        its page size, so the shell can't compute the page number itself)."""
+        self.services.send(self.name, "update", FOLLOW_CURRENT if follow_current else page)
 
     def show_combat_view(self) -> None:
         self.services.send(self.name, "show")

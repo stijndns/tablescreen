@@ -1,6 +1,5 @@
 # ── Layout constants ─────────────────────────────────────────────────────────
 FONT_FAMILY     = "Consolas"
-MIN_PAGE_SIZE   = 6             # combatants per page
 ROUND_FONT_SIZE = 22
 NAME_FONT_SIZE  = 15
 STAT_FONT_SIZE  = 12
@@ -56,5 +55,11 @@ STATE_LABELS = {
     "dead":   "Defeated",
 }
 
+PT_TO_PX    = 96 / 72           # design font sizes are points at 96 DPI
+MIN_FONT_PX = 12
+
 def scaled_font(base: int, scale: float) -> int:
-    return max(9, int(base * scale))
+    """Tk font size for a design size in points. Negative = pixels, so text
+    scales with the same unit as the row geometry (see layout.py) instead of
+    being enlarged a second time by the display scaling."""
+    return -max(MIN_FONT_PX, round(base * scale * PT_TO_PX))

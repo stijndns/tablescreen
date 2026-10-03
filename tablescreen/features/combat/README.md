@@ -32,7 +32,7 @@ combat end
 
 ## What the players see
 
-Combatants are listed in initiative order, six per page, with the active one highlighted.
+Combatants are listed in initiative order with the active one highlighted. As many rows are shown per page as fit in the window: the size of a row follows its text, not the window, so a larger window shows more combatants rather than larger ones.
 
 - Player characters show their exact hit points. NPCs and monsters show a descriptive state instead: Healthy, Bloodied, Wounded, Near Death or Defeated, with a coloured bar.
 - Monsters stay hidden until their first turn. Before that, they are shown greyed out at the bottom of the list, so players cannot read the monsters' initiative from the order.
@@ -41,7 +41,19 @@ Combatants are listed in initiative order, six per page, with the active one hig
 - Reactions, legendary actions and conditions are shown under each name.
 - A portrait from `assets/images/combatants` can be added with `combat image <name> <file>`.
 
-`page next`, `page prev` and `page <number>` switch pages by hand.
+`page next`, `page prev` and `page <number>` switch pages by hand. After a page has been chosen by hand, the next `next` returns to the page of the active combatant. When the window is resized, the active combatant stays on screen if it was visible before.
+
+### Text size
+
+Text on the combat screen keeps the same physical size on every screen: it follows the display scaling set in Windows for that screen. The `text_scale` setting enlarges or reduces everything on the combat screen, which helps when the screen is read from across the table:
+
+```toml
+[features.combat]
+window = "mainscreen"
+text_scale = 1.0            # 0.25 to 4; 1.5 makes all text and rows half as large again
+```
+
+A larger `text_scale` means fewer combatants per page.
 
 ## Hit points and statuses
 
