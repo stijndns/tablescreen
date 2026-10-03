@@ -23,6 +23,11 @@ class CombatView(tk.Frame):
         self._page: int = 0          # 0-based current page index
         self._image_cache: dict = {}
         self.bind("<Configure>", lambda e: self._redraw((e.width, e.height)))
+        # Grid layout: header in row 0, combatant i in row i + 1. Stretch the
+        # column to the full width and keep the rows at the top (grid would
+        # otherwise centre them vertically, unlike pack).
+        self.columnconfigure(0, weight=1)
+        self.grid_anchor("n")
         self.view_cache: list[CombatantView] = []
         self.header = None
         self.H = 0
@@ -98,7 +103,7 @@ class CombatView(tk.Frame):
         gap = int(6 * self.scale)
         for index, combatant_view in enumerate(self.view_cache, 0):
             if combatant_view.winfo_ismapped():
-                combatant_view.pack_configure(pady=((gap * 2 if index == 0 else gap), 2), padx=combatant_view.padding)
+                combatant_view.grid_configure(pady=((gap * 2 if index == 0 else gap), 2), padx=combatant_view.padding)
 
     def _draw(self):
         assert self._snapshot is not None
@@ -117,12 +122,13 @@ class CombatView(tk.Frame):
             if len(self.view_cache) <= index:
                 combatant_view = CombatantView(self, combatant, self._image_cache, self.scale)
                 self.view_cache.append(combatant_view)
-                combatant_view.pack(fill="x", expand=False, pady= ((gap * 2 if index == 0 else gap), 2), padx=combatant_view.padding)
             else:
                 combatant_view = self.view_cache[index]
                 combatant_view.update_config(self.scale)
-                if not combatant_view.winfo_ismapped():
-                    combatant_view.pack(fill="x", expand=False, pady=((gap * 2 if index == 0 else gap), 2), padx=combatant_view.padding)
+            if not combatant_view.winfo_ismapped():
+                combatant_view.grid(row=index + 1, column=0, sticky="ew",
+                                    pady=((gap * 2 if index == 0 else gap), 2),
+                                    padx=combatant_view.padding)
 
         # update all sizes of widgets so the canvas can correctly allign on right side
         self.update_idletasks()
@@ -137,7 +143,7 @@ class CombatView(tk.Frame):
                 combatant_view.draw_row(self._snapshot["current_index"] - self._page * MIN_PAGE_SIZE == index)
 
         for index in range(len(entries), len(self.view_cache)):
-            self.view_cache[index].pack_forget()
+            self.view_cache[index].grid_remove()
 
 
     # ── Header ────────────────────────────────────────────────────────────────
@@ -147,7 +153,7 @@ class CombatView(tk.Frame):
         if self.header is None:
             c = tk.Canvas(self, bg=PALETTE["surface"], bd=0, highlightthickness=0, height=header_h)
             self.header = c
-            c.pack(fill="x", expand=False)
+            c.grid(row=0, column=0, sticky="ew")
         else:
             c = self.header
             c.delete('all')
@@ -169,12 +175,3 @@ class CombatView(tk.Frame):
             fill=PALETTE["text_muted"],
             font=(FONT_FAMILY, scaled_font(MUTED_FONT_SIZE, self.scale)),
             anchor="e")
-
-    # ── Pack helpers ──────────────────────────────────────────────────────────
-
-    def hide(self):
-        self.pack_forget()
-
-    def show(self):
-        self.pack(fill="both", expand=True)
-        self._redraw((self.winfo_width(), self.winfo_height()))
