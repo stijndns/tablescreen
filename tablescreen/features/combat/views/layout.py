@@ -98,6 +98,16 @@ def parse_layout(value) -> tuple[str, Optional[str]]:
                             f"got {value!r}; using {DEFAULT_LAYOUT}.")
 
 
+def text_scale_from_text(text: str) -> Optional[float]:
+    """A text_scale typed in the shell ("1.5"), or None if invalid or out of range."""
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    low, high = TEXT_SCALE_RANGE
+    return value if low <= value <= high else None
+
+
 def parse_text_scale(value) -> tuple[float, Optional[str]]:
     """text_scale from config: (value, warning or None)."""
     low, high = TEXT_SCALE_RANGE

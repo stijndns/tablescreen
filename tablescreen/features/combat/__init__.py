@@ -134,6 +134,16 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
                        if layout else "")
                 print(f"[+] Combat layout: {view.layout_name}{fit}.")
 
+        elif command == "scale":
+            # Per-view setting, like the layout.
+            if self.views:
+                view = self.views[0]
+                if message.arg is not None:
+                    view.set_text_scale(message.arg)
+                layout = view.layout
+                fit = f", {layout.page_size} combatants per page" if layout else ""
+                print(f"[+] Combat text scale: {view.text_scale:g}{fit}.")
+
         # Paging targets the primary view. With a mirror this would need an
         # explicit target so the DM could page independently.
         elif command == "page_next":

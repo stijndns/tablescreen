@@ -26,7 +26,7 @@ from ...core.completion import get_arg_parts, tab_completion
 from ...core.paths import COMBATANT_IMAGES_DIR, COMBATANTS_DIR
 from . import persistence, prompts
 from .model import Type
-from .views.layout import LAYOUTS
+from .views.layout import LAYOUTS, TEXT_SCALE_RANGE, text_scale_from_text
 
 CURRENT_OS = platform.system()
 
@@ -60,6 +60,9 @@ Combat tracker commands:
   combat layout                               — show the current layout
   combat layout single | double               — one column, or two (down the left
                                                 column first, then the right)
+  combat scale                                — show the current text scale
+  combat scale <value>                        — resize the combat screen's text and
+                                                rows (0.25 to 4), e.g. combat scale 1.5
 
 Shorthand commands (usable outside 'combat ...'):
   next                        — advance to next turn (resets current combatant's reaction)
@@ -142,6 +145,14 @@ class CombatCommandsMixin:
                 print(f"Usage: combat layout [{' | '.join(LAYOUTS)}]")
             else:
                 self.services.send(self.name, "layout", choice)   # None = report only
+        elif sub == "scale":
+            value = text_scale_from_text(rest[0]) if rest else None
+            if rest and value is None:
+                low, high = TEXT_SCALE_RANGE
+                print(f"Usage: combat scale [<value>]  (a number from {low:g} to {high:g}, "
+                      f"e.g. 1.5)")
+            else:
+                self.services.send(self.name, "scale", value)    # None = report only
         elif sub == "noreaction":
             self._next_no_reaction = True
             print("[i] Next 'combat add' will not get a Reaction slot.")
@@ -606,7 +617,7 @@ class CombatCommandsMixin:
         parts = get_arg_parts(line[:begidx])
         top_subs = ["new", "add", "start", "status", "end", "show", "screen",
                     "noreaction", "reset", "legendary", "action", "log",
-                    "export", "import", "image", "remove", "layout"]
+                    "export", "import", "image", "remove", "layout", "scale"]
 
         if len(parts) == 1:
             return [s for s in top_subs if s.startswith(text)]

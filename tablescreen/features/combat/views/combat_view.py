@@ -55,6 +55,16 @@ class CombatView(tk.Frame):
     def layout_name(self) -> str:
         return next(name for name, cols in LAYOUTS.items() if cols == self._columns)
 
+    @property
+    def text_scale(self) -> float:
+        return self._text_scale
+
+    def set_text_scale(self, text_scale: float):
+        """Resize all text and rows; keeps the active combatant in view."""
+        self._text_scale = text_scale
+        self.resize()
+        self._redraw()
+
     def set_columns(self, columns: int):
         """Switch between one and two columns; keeps the active combatant in view."""
         self._columns = columns

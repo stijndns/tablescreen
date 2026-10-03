@@ -50,10 +50,12 @@ Text on the combat screen keeps the same physical size on every screen: it follo
 ```toml
 [features.combat]
 window = "mainscreen"
-text_scale = 1.0            # 0.25 to 4; 1.5 makes all text and rows half as large again
+text_scale = 1.5            # 0.25 to 4; 1.5 makes all text and rows half as large again
 ```
 
 A larger `text_scale` means fewer combatants per page.
+
+The scale can also be changed during a session, for example when players find the text too small: `combat scale 2` resizes everything on the combat screen immediately and keeps the active combatant in view. `combat scale` on its own prints the current scale and how many combatants fit per page. The change lasts until the application is closed; the configuration sets the scale it starts with.
 
 ### Two columns
 
@@ -161,6 +163,7 @@ Everything that happens during combat is recorded in a log. `combat log` prints 
 | `condition add` / `remove` / `list <name> [condition]` | Manage conditions |
 | `page next` / `prev` / `<number>` | Switch pages on the combat screen |
 | `combat layout` / `single` / `double` | Print or set the number of columns on the combat screen |
+| `combat scale` / `combat scale <value>` | Print or set the text scale of the combat screen (0.25 to 4) |
 
 The shortcuts (`next`, `hp`, `temphp`, `maxhp`, `resource`, `condition` and `page`) are currently top-level commands. Requiring a `combat` prefix for them is being considered, to avoid clashes with future features.
 
