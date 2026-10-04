@@ -1,8 +1,8 @@
 """
 battlemap_view.py — The battlemap display.
 
-One canvas in tagged layers: backdrop → sprites → aoe → grid → coords (bottom
-to top).
+One canvas in tagged layers: backdrop → sprites → fog → aoe → grid → coords
+(bottom to top).
 The backdrop is a static image or a streamed video (see animation.py); it is
 expensive, so other layers never force it to redraw. Mainloop thread only.
 """
@@ -17,8 +17,8 @@ from PIL import Image, ImageTk
 
 from ..styling import *
 from ..model.aoe import AoE, aoe_cells
-from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX,
-                          area_to_pixels, cell_px, coord_labels,
+from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, CellArea,
+                          area_to_pixels, cell_px, coord_labels, fog_runs,
                           grid_line_positions, label_font_px)
 from ..video import VideoStream, is_video, oversize_warning, probe
 from ..sprite_images import (SpriteSource, fit_size, read_source, rotated_size,
@@ -29,7 +29,9 @@ from ....core.paths import IMAGES_DIR
 
 BACKDROP_TAG = "backdrop"
 SPRITES_TAG = "sprites"
+FOG_TAG = "fog"
 AOE_TAG = "aoe"
+FOG_COLOR = "black"     # opaque: Tk canvases have no transparency
 GRID_TAG = "grid"
 COORDS_TAG = "coords"
 
@@ -71,6 +73,8 @@ class BattleMapView(tk.Frame):
 
         self._sprites: tuple = ()           # from the snapshot
         self._aoes: tuple = ()              # from the snapshot
+        self._fow_on = False                # from the snapshot
+        self._fow_revealed: frozenset = frozenset()
         self._sprite_sources: dict[str, Optional[SpriteSource]] = {}   # None = failed
         # Keyed by (file, rotation, w, h); only keys currently in use.
         self._sprite_frames: dict[tuple, list[ImageTk.PhotoImage]] = {}
@@ -157,6 +161,8 @@ class BattleMapView(tk.Frame):
         self._coords_style = snapshot.get("coords_style", self._coords_style)
         self._sprites = snapshot.get("sprites", ())
         self._aoes = snapshot.get("aoes", ())
+        self._fow_on = snapshot.get("fow_on", False)
+        self._fow_revealed = snapshot.get("fow_revealed", frozenset())
 
         filename = snapshot.get("bgimage")
         if filename != self._filename:
@@ -176,14 +182,16 @@ class BattleMapView(tk.Frame):
 
         self._draw_backdrop(width, height)
         self._draw_sprites(width, height)
+        self._draw_fog(width, height)
         self._draw_aoes(width, height)
         self._draw_grid(width, height)
         self._draw_coords(width, height)
 
     def _restack(self) -> None:
-        """Enforce backdrop → sprites → aoe → grid → coords; new items land on top."""
+        """Enforce backdrop → sprites → fog → aoe → grid → coords; new items land on top."""
         self.canvas.tag_lower(BACKDROP_TAG)
         self.canvas.tag_raise(SPRITES_TAG)
+        self.canvas.tag_raise(FOG_TAG)
         self.canvas.tag_raise(AOE_TAG)
         self.canvas.tag_raise(GRID_TAG)
         self.canvas.tag_raise(COORDS_TAG)
@@ -294,6 +302,26 @@ class BattleMapView(tk.Frame):
         except Exception as exc:
             print(f"[!] Could not load sprite image {file}: {exc}")
             return []
+
+    # ── Fog of war ────────────────────────────────────────────────────────
+
+    def _draw_fog(self, width: int, height: int) -> None:
+        """Opaque cover over every hidden cell, one rectangle per run of a row."""
+        self.canvas.delete(FOG_TAG)
+        if not self._fow_on:
+            return
+        cell = self.current_cell_px()
+        if not cell or cell < MIN_CELL_PX:
+            # Cell size unknown or too small to show reveals: hide everything.
+            self.canvas.create_rectangle(0, 0, width, height, fill=FOG_COLOR,
+                                         width=0, tags=FOG_TAG)
+        else:
+            rows, cols = math.ceil(height / cell), math.ceil(width / cell)
+            for row, first, last in fog_runs(rows, cols, self._fow_revealed):
+                x, y, w, h = area_to_pixels(CellArea(row, first, row, last), cell)
+                self.canvas.create_rectangle(x, y, min(x + w, width), min(y + h, height),
+                                             fill=FOG_COLOR, width=0, tags=FOG_TAG)
+        self._restack()
 
     # ── Areas of effect ───────────────────────────────────────────────────
 
