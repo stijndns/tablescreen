@@ -129,9 +129,23 @@ condition list Brann
 
 ## Saving rosters and logs
 
-`combat export <name>` saves the current combatants to `combatants/<name>.json`, and `combat import <name>` loads them again. This is useful for preparing encounters in advance or keeping a party roster.
+`combat export <name>` saves the current combatants to `combatants/<name>.json`, and `combat import <name>` loads them again. This is useful for preparing encounters in advance, keeping a party roster, and carrying damaged survivors from one fight into the next.
 
-A roster file stores each combatant's definition rather than their state in a particular fight: name, type, `hp_max`, portrait, resource maxima, and `temp_hp_max`, the temporary hit points the combatant starts an encounter with. `temp_hp_max` is optional and defaults to 0, so older files still load. Despite the name, it is a starting amount, not a cap; the name only mirrors `hp_max`.
+Both work before, during and after combat:
+
+- Export writes every combatant except those marked dead (they are listed in the shell). Combatants who left combat are included, since they may only have fled.
+- Import asks for each combatant's initiative. During combat, imported combatants join as pending and enter the turn order at the start of the next round; an initiative tie with someone already in the fight is resolved the same way as with `combat add`.
+- Outside combat, an imported combatant replaces one with the same name. During combat, a name that is already in the fight is skipped instead, so nobody is removed from a running turn order; rename or remove the existing combatant first.
+
+A roster file stores each combatant's name, type, `hp_max`, portrait and resource maxima, plus:
+
+| Field | Meaning | When missing |
+|---|---|---|
+| `hp_current` | Current hit points | Full hit points (`hp_max`) |
+| `temp_hp_max` | Temporary hit points the combatant starts an encounter with; a starting amount, not a cap (the name mirrors `hp_max`) | 0 |
+| `temp_hp_current` | Current temporary hit points | `temp_hp_max` |
+
+All three are optional, so older files still load. Resources always start full, and initiative and conditions are not stored.
 
 Everything that happens during combat is recorded in a log. `combat log` prints it; `combat log save [name]` writes it to `logs/`, using a timestamp when no name is given. Starting combat begins a new log.
 
@@ -151,7 +165,7 @@ Everything that happens during combat is recorded in a log. `combat log` prints 
 | `combat legendary <name> <max>` | Give an NPC or monster legendary actions |
 | `combat image <name> <file>` | Assign a portrait |
 | `combat reset resources` | Refill all resources for everyone |
-| `combat export <name>` / `combat import <name>` | Save or load the roster |
+| `combat export <name>` / `combat import <name>` | Save or load the roster, also during combat (current hit points kept, the dead left out) |
 | `combat log` / `combat log save [name]` | Print or save the combat log |
 | `next` | Next turn |
 | `hp <name> <±amount>` / `hp <name> = <amount>` | Change hit points |

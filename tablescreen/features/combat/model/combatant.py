@@ -50,6 +50,7 @@ class Combatant:
     hp_current: int
     hp_max: int
     temp_hp: int = 0             # buffer that absorbs damage before HP (5e)
+    temp_hp_max: int = 0         # starting temp HP from a roster file (exported as is)
     resources: dict[str, Resource] = field(default_factory=dict)   # name → Resource
     conditions: list = field(default_factory=list)  # free-form condition strings
     status: Status = Status.ACTIVE

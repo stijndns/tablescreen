@@ -53,7 +53,10 @@ Combat tracker commands:
   combat action <actor> remove_condition <target> <cond> — remove condition
   combat image <name> <filename>              — assign an image to a combatant
   combat export <filename>                    — export roster to combatants/<filename>.json
+                                                (also during combat: current HP kept,
+                                                 dead combatants left out)
   combat import <filename>                    — import roster from combatants/<filename>.json
+                                                (during combat they join next round)
   combat log                                  — print combat log to shell
   combat log save [filename]                  — save combat log to logs/<filename>.txt
   combat show                                 — restore combat view after showing an image
@@ -129,8 +132,13 @@ class CombatCommandsMixin:
         elif sub == "import":
             if not rest:
                 print("Usage: combat import <filename>")
-            elif persistence.import_combatants(self.combat, rest[0]):
-                self.refresh_views()
+            else:
+                added = persistence.import_combatants(self.combat, rest[0])
+                if added and self.combat.active:
+                    for combatant in added:
+                        self.log.log_entry(f"[combat import] {combatant.summary()}")
+                if added:
+                    self.refresh_views()
         elif sub == "image":
             self._cmd_image(rest)
         elif sub in ("show", "screen"):
