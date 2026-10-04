@@ -25,8 +25,8 @@ from PIL import Image
 from ...core.completion import get_arg_parts, tab_completion
 from ...core.paths import COMBATANT_IMAGES_DIR, COMBATANTS_DIR
 from . import persistence, prompts
-from .model import Combatant, Type
-from .views.styling import MIN_PAGE_SIZE
+from .model import Type
+from .views.layout import LAYOUTS, TEXT_SCALE_RANGE, text_scale_from_text
 
 CURRENT_OS = platform.system()
 
@@ -53,15 +53,29 @@ Combat tracker commands:
   combat action <actor> remove_condition <target> <cond> — remove condition
   combat image <name> <filename>              — assign an image to a combatant
   combat export <filename>                    — export roster to combatants/<filename>.json
+                                                (also during combat: current HP kept,
+                                                 dead combatants left out)
   combat import <filename>                    — import roster from combatants/<filename>.json
+                                                (during combat they join next round)
   combat log                                  — print combat log to shell
   combat log save [filename]                  — save combat log to logs/<filename>.txt
   combat show                                 — restore combat view after showing an image
+  combat layout                               — show the current layout
+  combat layout single | double               — one column, or two (down the left
+                                                column first, then the right)
+  combat scale                                — show the current text scale
+  combat scale <value>                        — resize the combat screen's text and
+                                                rows (0.25 to 4), e.g. combat scale 1.5
 
 Shorthand commands (usable outside 'combat ...'):
   next                        — advance to next turn (resets current combatant's reaction)
   hp <name> <±amount>         — adjust HP:  hp Aria -15   hp Goblin-A +5
   hp <name> = <amount>        — set HP to exact value:  hp Aria = 80
+                                (damage with -amount is absorbed by temp HP first;
+                                 healing and '=' leave temp HP alone)
+  temphp <name> <amount>      — grant temp HP; the higher of old and new is kept
+  temphp <name> -<amount>     — lower temp HP only (stops at 0, never touches HP)
+  temphp <name> = <amount>    — set temp HP exactly (0 removes it)
 
   resource add <name> <res> <max>    — add/replace a resource slot
                                        e.g.  resource add Aria "Spell Slots 9th" 1
@@ -118,8 +132,13 @@ class CombatCommandsMixin:
         elif sub == "import":
             if not rest:
                 print("Usage: combat import <filename>")
-            elif persistence.import_combatants(self.combat, rest[0]):
-                self.refresh_views()
+            else:
+                added = persistence.import_combatants(self.combat, rest[0])
+                if added and self.combat.active:
+                    for combatant in added:
+                        self.log.log_entry(f"[combat import] {combatant.summary()}")
+                if added:
+                    self.refresh_views()
         elif sub == "image":
             self._cmd_image(rest)
         elif sub in ("show", "screen"):
@@ -128,6 +147,20 @@ class CombatCommandsMixin:
             else:
                 self.show_combat_view()
                 print("[+] Combat view restored.")
+        elif sub == "layout":
+            choice = rest[0].lower() if rest else None
+            if choice is not None and choice not in LAYOUTS:
+                print(f"Usage: combat layout [{' | '.join(LAYOUTS)}]")
+            else:
+                self.services.send(self.name, "layout", choice)   # None = report only
+        elif sub == "scale":
+            value = text_scale_from_text(rest[0]) if rest else None
+            if rest and value is None:
+                low, high = TEXT_SCALE_RANGE
+                print(f"Usage: combat scale [<value>]  (a number from {low:g} to {high:g}, "
+                      f"e.g. 1.5)")
+            else:
+                self.services.send(self.name, "scale", value)    # None = report only
         elif sub == "noreaction":
             self._next_no_reaction = True
             print("[i] Next 'combat add' will not get a Reaction slot.")
@@ -306,7 +339,7 @@ class CombatCommandsMixin:
                 return
             if action_type == "damage":
                 damage_type = rest[1] if len(rest) > 1 else None
-                message = target.adjust_hp(-amount)
+                message = target.take_damage(amount)
                 suffix = f" {damage_type}" if damage_type else ""
                 print(f"[+] {actor_name} → damage → {target_name}: "
                       f"{amount}{suffix}  ({message})")
@@ -369,23 +402,7 @@ class CombatCommandsMixin:
             if current:
                 self.log.log_turn_marker(current.name, self.combat.round,
                                          new_round=new_round)
-            self.refresh_views(page=self._page_of_current())
-
-    def _page_of_current(self) -> int | None:
-        """Page index holding the current combatant, so the view can follow
-        the turn across page boundaries."""
-        current = self.combat.current_combatant()
-        if current is None:
-            return None
-        combatants: list[Combatant] = self.combat.snapshot()["combatants"]
-        revealed = [c for c in combatants
-                    if not c.pending and (c.type is Type.MONSTER or c.has_acted)]
-        unrevealed = [c for c in combatants
-                      if c.pending or (c.type is Type.MONSTER and not c.has_acted)]
-        for index, entry in enumerate(revealed + unrevealed):
-            if entry.name == current.name:
-                return index // MIN_PAGE_SIZE
-        return None
+            self.refresh_views(follow_current=True)
 
     # ── hp ────────────────────────────────────────────────────────────────
 
@@ -402,9 +419,11 @@ class CombatCommandsMixin:
 
         try:
             if parts[1] == "=" and len(parts) >= 3:
-                message = combatant.set_hp(int(parts[2]))
+                message = combatant.set_hp(int(parts[2]))      # exact, bypasses temp HP
+            elif int(parts[1]) < 0:
+                message = combatant.take_damage(-int(parts[1]))   # temp HP first
             else:
-                message = combatant.adjust_hp(int(parts[1]))
+                message = combatant.adjust_hp(int(parts[1]))   # healing
         except ValueError:
             print("[!] Amount must be an integer (e.g. -15, +8, 42).")
             return
@@ -412,6 +431,31 @@ class CombatCommandsMixin:
         print(f"[+] {message}")
         prompts.apply_zero_hp_status(combatant, self.log)
         self.log.log_entry(f"[hp] {message}")
+        self.refresh_views()
+
+    def do_temphp(self, arg: str) -> None:
+        """Admin control of the temp HP buffer; damage goes through `hp -N`."""
+        parts = get_arg_parts(arg)
+        usage = "Usage: temphp <name> <amount> | temphp <name> -<amount> | temphp <name> = <amount>"
+        if len(parts) < 2:
+            print(usage)
+            return
+        combatant = self.combat.get(parts[0])
+        if combatant is None:
+            print(f"[!] Combatant '{parts[0]}' not found.")
+            return
+        try:
+            if parts[1] == "=" and len(parts) >= 3:
+                message = combatant.set_temp_hp(int(parts[2]))
+            elif parts[1].startswith("-"):
+                message = combatant.reduce_temp_hp(-int(parts[1]))
+            else:
+                message = combatant.grant_temp_hp(int(parts[1]))
+        except ValueError:
+            print(f"[!] Amount must be an integer. {usage}")
+            return
+        print(f"[+] {message}")
+        self.log.log_entry(f"[temphp] {message}")
         self.refresh_views()
 
     def do_maxhp(self, arg: str) -> None:
@@ -581,7 +625,7 @@ class CombatCommandsMixin:
         parts = get_arg_parts(line[:begidx])
         top_subs = ["new", "add", "start", "status", "end", "show", "screen",
                     "noreaction", "reset", "legendary", "action", "log",
-                    "export", "import", "image", "remove"]
+                    "export", "import", "image", "remove", "layout", "scale"]
 
         if len(parts) == 1:
             return [s for s in top_subs if s.startswith(text)]
@@ -597,6 +641,9 @@ class CombatCommandsMixin:
 
         if sub == "remove":
             return self._names(text) if len(parts) == 2 else []
+
+        if sub == "layout":
+            return [s for s in LAYOUTS if s.startswith(text)] if len(parts) == 2 else []
 
         if sub == "image":
             if len(parts) == 2:
@@ -627,6 +674,9 @@ class CombatCommandsMixin:
         return self._names(text)
 
     def complete_maxhp(self, text, line, begidx, endidx) -> list[str]:
+        return self._names(text)
+
+    def complete_temphp(self, text, line, begidx, endidx) -> list[str]:
         return self._names(text)
 
     def complete_next(self, text, line, begidx, endidx) -> list[str]:

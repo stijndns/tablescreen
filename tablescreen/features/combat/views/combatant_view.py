@@ -2,43 +2,53 @@ from __future__ import annotations
 
 import os
 import tkinter as tk
-from typing import TYPE_CHECKING
+from tkinter import font as tkfont
+from typing import TYPE_CHECKING, Callable, Optional
 
 from PIL import ImageTk, Image
 
 from .styling import *
 from ..model import Type, Status
+from .layout import fit_text
 from ....core.paths import COMBATANT_IMAGES_DIR
 
 if TYPE_CHECKING:
     from ..model import Combatant
 
 INITIATIVE_W    = 52
+
+# Called when text had to be shortened: (combatant name, field, original text).
+ShortenedCallback = Callable[[str, str, str], None]
+
+_FONTS: dict[tuple, tkfont.Font] = {}       # measuring fonts, one per spec
+
+
+def _measure(spec: tuple) -> Callable[[str], int]:
+    if spec not in _FONTS:
+        _FONTS[spec] = tkfont.Font(font=spec)
+    return _FONTS[spec].measure
+
+
 class CombatantView(tk.Canvas):
-    def __init__(self, parent: tk.Widget, combatant: Combatant, img_cache: dict, scale: float):
+    def __init__(self, parent: tk.Widget, combatant: Combatant, img_cache: dict,
+                 scale: float, row_h: int, on_shortened: Optional[ShortenedCallback] = None):
         self._scale = scale
-        self.row_h = max(30, int((ROW_HEIGHT_BASE + COND_EXTRA) * self._scale))
+        self.row_h = row_h          # from layout.compute_layout
         super().__init__(parent, bg=PALETTE["bg"], highlightthickness=0, bd=0, height=self.row_h+2) # max border width extra needed
         self.combatant = combatant
         self._image_cache = img_cache
+        self._on_shortened = on_shortened
 
-    def update_config(self, scale: float):
+    def update_config(self, scale: float, row_h: int):
         self._scale = scale
-        self.row_h = max(30, int((ROW_HEIGHT_BASE + COND_EXTRA) * self._scale))
+        self.row_h = row_h
         if self.config("height") != self.row_h + 2:
             self.configure(height=self.row_h+2)
 
     # ── helper functions───────────────────────────────────────────────────────
     def is_unrevealed(self) -> bool:
-        """Return True if this self.combatant should be rendered via _draw_unrevealed_row."""
-        return (self.combatant.pending
-                or self.combatant.left_combat
-                #or self.combatant.status in (Status.DEAD, Status.INCAPACITATED)
-                or (self.combatant.type is Type.MONSTER and not self.combatant.has_acted))
-
-    @property
-    def padding(self) -> int:
-        return int(self._scale * PADDING)
+        """Drawn greyed via draw_unrevealed_row (see Combatant.is_revealed)."""
+        return not self.combatant.is_revealed()
 
     @property
     def inner_padding(self) -> int:
@@ -53,21 +63,35 @@ class CombatantView(tk.Canvas):
         return self.init_col_w + self.inner_padding + 6
 
     @property
-    def _name_and_status(self) -> str:
+    def _name_and_status(self) -> tuple[str, str]:
+        """(display name, status tag such as "  [DEAD]" or "")."""
         display_name = self.combatant.name.replace("_", " ")
+        tag = ""
         match self.combatant.status:
             case Status.DEAD:
-                display_name += "  [DEAD]"
+                tag = "  [DEAD]"
             case Status.DYING:
-                display_name += "  [DYING]"
+                tag = "  [DYING]"
             case Status.INCAPACITATED:
-                display_name += "  [INCAPACITATED]"
+                tag = "  [INCAPACITATED]"
             case _:
                 if self.combatant.left_combat:
-                    display_name += "  [LEFT COMBAT]"
+                    tag += "  [LEFT COMBAT]"
                 if self.combatant.pending:
-                    display_name += "  [PENDING]"
-        return display_name
+                    tag += "  [PENDING]"
+        return display_name, tag
+
+    @property
+    def _text_right(self) -> int:
+        """Right edge available to left-aligned text."""
+        return self.winfo_width() - 2 - self.inner_padding
+
+    def _fit(self, text: str, spec: tuple, max_px: float, field: str) -> str:
+        """Shorten text that doesn't fit and report it, so it can be warned about."""
+        fitted = fit_text(text, max_px, _measure(spec))
+        if fitted != text and self._on_shortened is not None:
+            self._on_shortened(self.combatant.name, field, text)
+        return fitted
 
     def _create_accent_bar(self, colour: str):
         left = self.init_col_w + 2 #respect the border
@@ -96,20 +120,27 @@ class CombatantView(tk.Canvas):
 
     def _create_initiative(self, is_current: bool, is_dimmed: bool):
         init_color = PALETTE["current_glow"] if is_current else (PALETTE["text_dim"] if is_dimmed else PALETTE["text_primary"])
-        hidden = self.combatant.type is Type.MONSTER and not self.combatant.has_acted
+        hidden = self.combatant.hidden_initiative()
         init_text = "?" if hidden else str(self.combatant.initiative)
         self.create_text(self.init_col_w // 2, self.row_h // 2,
             text=init_text, fill=init_color,
             font=(FONT_FAMILY, scaled_font(NAME_FONT_SIZE, self._scale), "bold"),
             anchor="center")
 
-    def _create_name(self, y_pos: int, is_current: bool, is_dimmed: bool):
+    def _create_name(self, y_pos: int, is_current: bool, is_dimmed: bool, right: float):
+        """Name plus status tag, ending before ``right``. When it doesn't fit,
+        the name is shortened and the status tag is kept."""
         name_color = (PALETTE["text_dim"] if is_dimmed and not is_current else
                       PALETTE["current_glow"] if is_current else PALETTE["text_primary"])
+        spec = (FONT_FAMILY, scaled_font(NAME_FONT_SIZE, self._scale), "bold")
+        name, tag = self._name_and_status
+        available = right - self.text_x
+        if _measure(spec)(name + tag) > available:
+            name = self._fit(name, spec, available - _measure(spec)(tag), "name")
         self.create_text(self.text_x, y_pos,
-            text=self._name_and_status,
+            text=name + tag,
             fill=name_color,
-            font=(FONT_FAMILY, scaled_font(NAME_FONT_SIZE, self._scale), "bold"),
+            font=spec,
             anchor="w")
 
     # ── Revealed row ──────────────────────────────────────────────────────────
@@ -153,28 +184,28 @@ class CombatantView(tk.Canvas):
         res_y   = quarter * 3 - int(2 * self._scale)
         cond_y  = row_h - int(10 * self._scale)
 
+        # HP / status (aligned to name_y on right side). Drawn first: the name
+        # has to end before it.
+        if self.combatant.type is Type.PC:
+            hp_str   = f"{self.combatant.hp_current}/{self.combatant.hp_max} HP"
+            if self.combatant.temp_hp:
+                hp_str += f" +{self.combatant.temp_hp}"   # NPC/monster temp HP stays hidden
+            hp_color = PALETTE["text_primary"] if not is_dimmed else PALETTE["text_dim"]
+            hp_spec  = (FONT_FAMILY, scaled_font(STAT_FONT_SIZE, self._scale), "bold")
+        else:
+            hp_str   = STATE_LABELS.get(self.combatant.hp_bar_state, "")
+            fill_color = BAR_COLORS.get(self.combatant.hp_bar_state, PALETTE["bar_dead"])
+            hp_color = fill_color if not is_dimmed else PALETTE["text_dim"]
+            hp_spec  = (FONT_FAMILY, scaled_font(NAME_FONT_SIZE, self._scale), "bold")
+        self.create_text(x_right - inner_pad, name_y,
+            text=hp_str, fill=hp_color, font=hp_spec, anchor="e")
+        hp_left = x_right - inner_pad - _measure(hp_spec)(hp_str)
+
         # Name
-        self._create_name(name_y, is_current, is_dimmed)
+        self._create_name(name_y, is_current, is_dimmed, right=hp_left - inner_pad)
 
         # Type badge
         self._create_badge(accent if not is_dimmed else PALETTE["text_dim"], badge_y)
-
-        # HP / status (aligned to name_y on right side)
-        if self.combatant.type is Type.PC:
-            hp_str   = f"{self.combatant.hp_current}/{self.combatant.hp_max} HP"
-            hp_color = PALETTE["text_primary"] if not is_dimmed else PALETTE["text_dim"]
-            self.create_text(x_right - inner_pad, name_y,
-                text=hp_str, fill=hp_color,
-                font=(FONT_FAMILY, scaled_font(STAT_FONT_SIZE, self._scale), "bold"),
-                anchor="e")
-        else:
-            state_text  = STATE_LABELS.get(self.combatant.hp_bar_state, "")
-            fill_color  = BAR_COLORS.get(self.combatant.hp_bar_state, PALETTE["bar_dead"])
-            label_color = fill_color if not is_dimmed else PALETTE["text_dim"]
-            self.create_text(x_right - inner_pad, name_y,
-                text=state_text, fill=label_color,
-                font=(FONT_FAMILY, scaled_font(NAME_FONT_SIZE, self._scale), "bold"),
-                anchor="e")
 
         # Resources line: reaction and legendary actions
         res_parts = []
@@ -187,18 +218,23 @@ class CombatantView(tk.Canvas):
         # Note: "legendary_actions" key → display as "Legendary Actions" (underscore → space, title case)
         if res_parts:
             res_color = PALETTE["text_dim"] if is_dimmed else PALETTE["text_muted"]
+            res_spec  = (FONT_FAMILY, scaled_font(MUTED_FONT_SIZE, self._scale))
             self.create_text(self.text_x, res_y,
-                text="  ·  ".join(res_parts),
+                text=self._fit("  ·  ".join(res_parts), res_spec,
+                               self._text_right - self.text_x, "resources"),
                 fill=res_color,
-                font=(FONT_FAMILY, scaled_font(MUTED_FONT_SIZE, self._scale)),
+                font=res_spec,
                 anchor="w")
 
         # Conditions line (always reserved at bottom of row)
         conditions = self.combatant.conditions
         if conditions:
+            cond_spec = (FONT_FAMILY, scaled_font(10, self._scale))
             self.create_text(self.text_x, cond_y,
-                text="  ·  ".join(conditions), fill=PALETTE["gold"],
-                font=(FONT_FAMILY, scaled_font(10, self._scale)),
+                text=self._fit("  ·  ".join(conditions), cond_spec,
+                               self._text_right - self.text_x, "conditions"),
+                fill=PALETTE["gold"],
+                font=cond_spec,
                 anchor="w")
 
     # ── Unrevealed / pending row ──────────────────────────────────────────────
@@ -215,7 +251,8 @@ class CombatantView(tk.Canvas):
         self._create_accent_bar(PALETTE["bar_dead"])
 
         # Name + status tag
-        self._create_name(row_h // 2 - int(9 * self._scale), False, True)
+        self._create_name(row_h // 2 - int(9 * self._scale), False, True,
+                          right=self._text_right)
 
         # Type badge
         self._create_badge(PALETTE["text_dim"], self.row_h // 2 + int(8 * self._scale))

@@ -23,7 +23,8 @@ from ...core.feature import FeatureBase, ShellServices
 from .commands import CombatCommandsMixin
 from .log import CombatLog
 from .model import Combat
-from .views.combat_view import CombatView
+from .views.combat_view import FOLLOW_CURRENT, CombatView
+from .views.layout import LAYOUTS, parse_layout, parse_text_scale
 
 
 class CombatFeature(CombatCommandsMixin, FeatureBase):
@@ -45,9 +46,16 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
     def build(self, services: ShellServices) -> None:
         self.services = services
 
+        text_scale, warning = parse_text_scale(services.config.get("text_scale", 1.0))
+        if warning:
+            print(f"[!] combat: {warning}")
+        layout, warning = parse_layout(services.config.get("layout", "single"))
+        if warning:
+            print(f"[!] combat: {warning}")
+
         window_name = services.window_name()
         self.slot = services.slot(window_name)
-        view = CombatView(self.slot.frame)
+        view = CombatView(self.slot.frame, text_scale, LAYOUTS[layout])
         view.pack(fill="both", expand=True)
         self.views.append(view)
 
@@ -63,7 +71,11 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
             help_text="next — advance to the next combatant's turn.")
         services.register_command(
             "hp", self.do_hp, self.complete_hp,
-            help_text="hp <name> <±amount> | hp <name> = <amount> — adjust HP.")
+            help_text="hp <name> <±amount> | hp <name> = <amount> — adjust HP "
+                      "(damage hits temp HP first).")
+        services.register_command(
+            "temphp", self.do_temphp, self.complete_temphp,
+            help_text="temphp <name> <amount> | -<amount> | = <amount> — manage temp HP.")
         services.register_command(
             "maxhp", self.do_maxhp, self.complete_maxhp,
             help_text="maxhp <name> <new_max> — change maximum HP.")
@@ -84,9 +96,11 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
 
     # ── Called from commands (shell thread) ───────────────────────────────
 
-    def refresh_views(self, page: int | None = None) -> None:
-        """Ask the mainloop to redraw. Safe from the shell thread."""
-        self.services.send(self.name, "update", page)
+    def refresh_views(self, page: int | None = None, follow_current: bool = False) -> None:
+        """Ask the mainloop to redraw. Safe from the shell thread.
+        follow_current: show the active combatant's page (only the view knows
+        its page size, so the shell can't compute the page number itself)."""
+        self.services.send(self.name, "update", FOLLOW_CURRENT if follow_current else page)
 
     def show_combat_view(self) -> None:
         self.services.send(self.name, "show")
@@ -108,6 +122,27 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
 
         elif command == "update":
             self._render(page=message.arg)
+
+        elif command == "layout":
+            # Per-view setting, so it targets the primary view (like paging).
+            if self.views:
+                view = self.views[0]
+                if message.arg is not None:
+                    view.set_columns(LAYOUTS[message.arg])
+                layout = view.layout
+                fit = (f": {layout.columns} × {layout.rows} = {layout.page_size} per page"
+                       if layout else "")
+                print(f"[+] Combat layout: {view.layout_name}{fit}.")
+
+        elif command == "scale":
+            # Per-view setting, like the layout.
+            if self.views:
+                view = self.views[0]
+                if message.arg is not None:
+                    view.set_text_scale(message.arg)
+                layout = view.layout
+                fit = f", {layout.page_size} combatants per page" if layout else ""
+                print(f"[+] Combat text scale: {view.text_scale:g}{fit}.")
 
         # Paging targets the primary view. With a mirror this would need an
         # explicit target so the DM could page independently.

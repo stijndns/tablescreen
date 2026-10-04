@@ -182,12 +182,24 @@ class Combat:
             lines.append(f"{arrow}{c.summary()}")
         return lines
 
+    def display_order(self) -> list[Combatant]:
+        """The player screen's order, the single source for the view, paging
+        and the highlight: revealed combatants by initiative, then the rest
+        (pending, left, monsters before their first turn), also by initiative."""
+        order = self._order()
+        return ([c for c in order if c.is_revealed()]
+                + [c for c in order if not c.is_revealed()])
+
     def snapshot(self) -> dict:
         """Return a dict for the player screen renderer."""
-        order = self._order()
+        # Not current_combatant(): after a removal the turn index can point past
+        # the end (review item 3), and the screen must keep drawing anyway.
+        order = self._in_combat_order()
+        current = (order[self.turn_index]
+                   if self.active and self.turn_index < len(order) else None)
         return {
             "active": self.active,
             "round": self.round,
-            "combatants": deepcopy(order),
-            "current_index": self.turn_index if self.active else -1
+            "combatants": deepcopy(self.display_order()),
+            "current": current.name if current else None,   # names are unique
         }
