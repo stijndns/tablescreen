@@ -44,6 +44,9 @@ class BattleMapState:
         self.aoes: tuple[AoE, ...] = ()     # same snapshot-safe pattern
         self._aoe_counter = 0
         self._aoe_colors_used = 0
+        # Fog of war: while on, every cell is hidden except the revealed ones.
+        self.fow_on: bool = False
+        self.fow_revealed: frozenset[tuple[int, int]] = frozenset()   # (row, col)
 
     def snapshot(self) -> dict:
         """Return a dict for the battlemap state."""
@@ -53,10 +56,14 @@ class BattleMapState:
             "coords_style": self.coords_style,
             "sprites": self.sprites,
             "aoes": self.aoes,
+            "fow_on": self.fow_on,
+            "fow_revealed": self.fow_revealed,
         }
 
     def load_map_image(self, filename: str) -> None:
         self.bgimage = filename
+        # Fog stays on or off; reveals from the old map don't fit a new one.
+        self.fow_revealed = frozenset()
 
     def clear_map_image(self) -> None:
         self.bgimage = None
@@ -174,3 +181,30 @@ class BattleMapState:
         count = len(self.aoes)
         self.aoes = ()
         return count
+
+    # ── Fog of war ────────────────────────────────────────────────────────
+
+    def fow_enable(self) -> None:
+        """Fog on, everything hidden (also when it was already on)."""
+        self.fow_on, self.fow_revealed = True, frozenset()
+
+    def fow_disable(self) -> None:
+        """Fog off; reveals are forgotten, so the next `on` starts fully hidden."""
+        self.fow_on, self.fow_revealed = False, frozenset()
+
+    def fow_reveal(self, area: CellArea) -> int:
+        """Reveal a footprint; returns how many cells were newly revealed."""
+        before = len(self.fow_revealed)
+        self.fow_revealed = self.fow_revealed | _cells(area)
+        return len(self.fow_revealed) - before
+
+    def fow_hide(self, area: CellArea) -> int:
+        """Cover a footprint again; returns how many cells were newly hidden."""
+        before = len(self.fow_revealed)
+        self.fow_revealed = self.fow_revealed - _cells(area)
+        return before - len(self.fow_revealed)
+
+
+def _cells(area: CellArea) -> frozenset[tuple[int, int]]:
+    return frozenset((row, col) for row in range(area.top, area.bottom + 1)
+                     for col in range(area.left, area.right + 1))

@@ -28,6 +28,9 @@ from .views.battlemap_view import BattleMapView
 
 CURRENT_OS = platform.system()
 
+# A typo like A1:ZZZ9999 would otherwise create millions of cells.
+MAX_FOW_CELLS = 10_000
+
 BATTLEMAP_HELP = """\
 Battlemap commands:
     map show <file>                 — show an image or a looping .webm video
@@ -76,6 +79,14 @@ Areas of effect (sizes in feet, multiples of 5; diagonals count 5-10-5):
     map aoe list                    — all AoEs
     map aoe remove <name>           — remove one
     map aoe clear                   — remove all
+
+Fog of war (hides the map, sprites included; areas of effect, grid and
+coordinates stay visible):
+    map fow                         — fog status
+    map fow on                      — hide the whole map
+    map fow reveal <cell|range>     — uncover a cell or range, e.g. B3:D6
+    map fow hide <cell|range>       — cover it again
+    map fow off                     — remove the fog; reveals are forgotten
 """
 
 
@@ -194,6 +205,8 @@ class BattleMapFeature(FeatureBase):
             self._cmd_grid(rest)
         elif sub == "coords":
             self._cmd_coords(rest)
+        elif sub == "fow":
+            self._cmd_fow(rest)
         elif sub == "aoe":
             self._cmd_aoe(rest)
         elif sub == "sprite":
@@ -287,6 +300,43 @@ class BattleMapFeature(FeatureBase):
             print("Usage: map sprite add <file> <cell|range> [as <name>] | "
                   "move <name> <cell> | resize <name> <range> | "
                   "rotate <name> <degrees> | remove <name> | list | clear")
+
+    def _cmd_fow(self, rest: list[str]) -> None:
+        action = rest[0].lower() if rest else ""
+        state = self.state
+        if action == "":
+            if state.fow_on:
+                print(f"Fog of war: on, {len(state.fow_revealed)} cell(s) revealed.")
+            else:
+                print("Fog of war: off.")
+        elif action == "on":
+            state.fow_enable()
+            self.services.send(self.name, "show")
+            print("[+] Fog of war on: the whole map is hidden. "
+                  "Uncover parts with 'map fow reveal <cell|range>'.")
+        elif action == "off":
+            state.fow_disable()
+            self.services.send(self.name, "render")
+            print("[+] Fog of war off: the whole map is visible.")
+        elif action in ("reveal", "hide"):
+            area = parse_area(rest[1]) if len(rest) == 2 else None
+            if area is None:
+                print(f"Usage: map fow {action} <cell|range>  (e.g. E8 or B3:D6)")
+                return
+            if not state.fow_on:
+                print("[!] Fog of war is off. Turn it on with 'map fow on' first.")
+                return
+            if area.rows * area.cols > MAX_FOW_CELLS:
+                print(f"[!] {area_label(area, state.coords_style)} covers "
+                      f"{area.rows * area.cols} cells; the limit is {MAX_FOW_CELLS}.")
+                return
+            changed = (state.fow_reveal if action == "reveal" else state.fow_hide)(area)
+            self.services.send(self.name, "render")
+            verb = "Revealed" if action == "reveal" else "Hid"
+            print(f"[+] {verb} {area_label(area, state.coords_style)}: {changed} cell(s) "
+                  f"changed, {len(state.fow_revealed)} revealed in total.")
+        else:
+            print("Usage: map fow [on | off | reveal <cell|range> | hide <cell|range>]")
 
     def _cmd_aoe(self, rest: list[str]) -> None:
         action = rest[0].lower() if rest else ""
@@ -577,7 +627,7 @@ class BattleMapFeature(FeatureBase):
     def complete_battlemap(self, text, line, begidx, endidx) -> list[str]:
         parts = get_arg_parts(line[:begidx])
         top_subs = ["show", "bgclear", "fullscreen", "restore", "grid", "coords",
-                    "sprite", "aoe"]
+                    "sprite", "aoe", "fow"]
 
         if len(parts) == 1:
             return [s for s in top_subs if s.startswith(text)]
@@ -603,6 +653,8 @@ class BattleMapFeature(FeatureBase):
             else:
                 options = ()
             return [s for s in options if s.startswith(text)]
+        if sub == "fow" and len(parts) == 2:
+            return [o for o in ("on", "off", "reveal", "hide") if o.startswith(text.lower())]
         if sub == "aoe":
             if len(parts) == 2:
                 options = (*SHAPES, "move", "list", "remove", "clear")

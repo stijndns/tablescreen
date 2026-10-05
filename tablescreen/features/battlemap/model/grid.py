@@ -258,6 +258,24 @@ def area_to_pixels(area: CellArea, cell: float) -> tuple[float, float, float, fl
     return x, y, area.cols * cell, area.rows * cell
 
 
+def fog_runs(rows: int, cols: int,
+             revealed: frozenset[tuple[int, int]]) -> list[tuple[int, int, int]]:
+    """Hidden cells of a rows × cols grid as horizontal runs (row, first_col,
+    last_col), 1-based and inclusive: one rectangle per run instead of one
+    per cell."""
+    runs = []
+    for row in range(1, rows + 1):
+        start = None
+        for col in range(1, cols + 2):          # cols + 1 closes a trailing run
+            hidden = col <= cols and (row, col) not in revealed
+            if hidden and start is None:
+                start = col
+            elif not hidden and start is not None:
+                runs.append((row, start, col - 1))
+                start = None
+    return runs
+
+
 def label_font_px(cell: float, location: str) -> Optional[int]:
     """Label font size in pixels for this cell size, or None if too small."""
     fraction = SIDE_FONT_FRACTION if location == "sides" else CELL_FONT_FRACTION

@@ -184,6 +184,24 @@ Directions are `n`, `ne`, `e`, `se`, `s`, `sw`, `w` and `nw`, with north at the 
 
 `map aoe move <name> <origin>` moves an area to a new origin. The origin follows the same rules as when the area was created; a sphere may switch between a cell and a corner origin. To change the shape, size or direction, the area is removed and created again.
 
+## Fog of war
+
+`map fow on` covers the whole map in solid black. Parts of it are uncovered with `map fow reveal`, using the same cells and ranges as sprites, and covered again with `map fow hide`:
+
+```
+map fow on
+map fow reveal B2:E8       the room the party is in
+map fow reveal F3:G5       the corridor ahead
+map fow hide C3            a door closes
+map fow off                everything visible again
+```
+
+Reveals add up, and `map fow` on its own prints whether fog is on and how many cells are revealed. `map fow off` removes the fog and forgets all reveals, so the next `map fow on` starts with the whole map hidden again.
+
+The fog hides the backdrop and the sprites under it, which allows traps, treasure or monsters to be placed in advance; they appear when their cells are revealed. Areas of effect, the grid and the coordinate labels are drawn on top of the fog and stay visible. Loading a different backdrop with `map show` keeps the fog on or off as it was; when it is on, the new map starts fully hidden.
+
+The fog is opaque because Tk canvases do not support transparency. Reveals are stored in cells, like sprites, so they follow `map grid resize`; the backdrop does not change with the grid, so after a resize a revealed area no longer covers exactly the same part of the map image.
+
 ## Command reference
 
 | Command | Description |
@@ -213,10 +231,13 @@ Directions are `n`, `ne`, `e`, `se`, `s`, `sw`, `w` and `nw`, with north at the 
 | `map aoe remove <name>` | Remove one area |
 | `map aoe list` | List all areas |
 | `map aoe clear` | Remove all areas |
+| `map fow` | Fog of war status |
+| `map fow on` / `off` | Hide the whole map / remove the fog (and forget reveals) |
+| `map fow reveal <cell or range>` / `hide <cell or range>` | Uncover or cover part of the map |
 
 ## How it is drawn
 
-Everything is drawn on a single Tk canvas in layers, from bottom to top: backdrop, sprites, areas of effect, grid, coordinate labels. Grid lines and labels therefore stay visible on top of sprites and areas, and areas are drawn over sprites.
+Everything is drawn on a single Tk canvas in layers, from bottom to top: backdrop, sprites, fog of war, areas of effect, grid, coordinate labels. Grid lines and labels therefore stay visible on top of everything, areas are drawn over sprites and fog, and the fog hides the backdrop and sprites.
 
 Only the backdrop is expensive to redraw: scaling a 4K image takes noticeable time and memory. Changes to the other layers never cause the backdrop to be redrawn, and a video backdrop reuses one image for every frame.
 
