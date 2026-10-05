@@ -53,7 +53,9 @@ Draining always empties the whole queue, because Tk merges events and there is n
 - A **content slot** is one feature's `tk.Frame` inside a window. A window can hold several slots but shows only one: calling `show()` on a slot hides its siblings. This is how the combat screen and the image viewer share the main screen without knowing about each other.
 - A **view** is owned by a feature and draws the feature's state into a slot. A feature may have several views of the same state; `FeatureBase.views` is a list for that reason.
 
-Closing a window with its close button only hides it; slots and their contents survive. `Window.restore()` brings it back.
+Closing a window with its close button only hides it; slots and their contents survive. `Window.restore()` brings it back. A feature can replace that behaviour for its own window with `Window.on_close(callback)`, and `WindowService.remove_window(name)` destroys a window for good; the owner releases what its content holds (threads, images) first.
+
+`Window.default_geometry` is the size the window was created with (what `restore()` returns to). `Window.initial_geometry` is its size and position (`"WxH+X+Y"`) when it was first mapped, or `None` before that; it can be passed to `get_window(name, geometry)` to open another window in the same place.
 
 `Window.monitor()` returns the monitor containing the centre of the window, or the nearest one. The centre is used rather than the top-left corner because maximised windows on Windows sit a few pixels off-screen.
 

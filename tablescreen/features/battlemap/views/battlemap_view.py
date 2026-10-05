@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import math
 import tkinter as tk
+import weakref
+from pathlib import Path
 from typing import Callable, Optional, Tuple
 
 from PIL import Image, ImageTk
@@ -20,7 +22,7 @@ from ..model.aoe import AoE, aoe_cells
 from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, CellArea,
                           area_to_pixels, cell_px, coord_labels, fog_runs,
                           grid_line_positions, label_font_px)
-from ..video import VideoStream, is_video, oversize_warning, probe
+from ..video import VideoStream, first_frame, is_video, oversize_warning, probe
 from ..sprite_images import (SpriteSource, fit_size, read_source, rotated_size,
                              scaled_frames)
 from .animation import AnimationClock, SpriteAnimation, VideoBackdrop
@@ -41,11 +43,32 @@ LABEL_SHADOW_COLOR = "black"    # no canvas transparency, so labels get a shadow
 PpiProvider = Callable[[], Optional[float]]
 
 
+class BackdropCache:
+    """Hands every view the same decoded backdrop, so a mirror doesn't hold a
+    second full-resolution copy (~33 MB for 4K). Weak: an image lives only
+    while a view uses it."""
+
+    def __init__(self) -> None:
+        self._images: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+
+    def open(self, path: Path) -> Image.Image:
+        """The decoded image; for a video, its first frame as a still."""
+        image = self._images.get(path)
+        if image is None:
+            image = first_frame(path) if is_video(path.name) else Image.open(path)
+            image.load()
+            self._images[path] = image
+        return image
+
+
 class BattleMapView(tk.Frame):
     """Displays the battlemap backdrop with optional grid and coordinates."""
 
     def __init__(self, parent: tk.Widget, grid_settings: GridSettings,
-                 ppi_provider: PpiProvider):
+                 ppi_provider: PpiProvider, *,
+                 backdrops: Optional[BackdropCache] = None, mirror: bool = False):
+        """mirror: a DM copy of the table view. Shows a video backdrop as a
+        still and loads quietly (the table view reports)."""
         super().__init__(parent, bg=PALETTE["bg"])
         self.canvas = tk.Canvas(self, bg=PALETTE["surface"], bd=0, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
@@ -57,6 +80,8 @@ class BattleMapView(tk.Frame):
         # Rescaling a 4K image costs ~100 MB transiently, so skip it when
         # only another layer (e.g. the grid) changed.
         self._backdrop_key: Optional[tuple] = None
+        self._backdrops = backdrops or BackdropCache()
+        self._mirror = mirror
 
         self._grid_settings = grid_settings
         self._grid_color = self._valid_color(
@@ -109,20 +134,33 @@ class BattleMapView(tk.Frame):
 
         path = IMAGES_DIR / filename
         if not path.exists():
-            print(f"[!] File not found: {path}")
-            return False
-        if is_video(filename):
+            return self._load_failed(filename, f"File not found: {path}")
+        if is_video(filename) and not self._mirror:
             return self._load_video(path, filename)
         try:
-            original = Image.open(path)
+            original = self._backdrops.open(path)
         except Exception as exc:
-            print(f"[!] Error loading image: {exc}")
-            return False
+            kind = "video still" if is_video(filename) else "image"
+            return self._load_failed(filename, f"Error loading {kind}: {exc}")
         self._stop_video()
         self._original = original
         self._filename = filename
-        print(f"[+] Loaded image: {filename}")
+        if not self._mirror:
+            print(f"[+] Loaded image: {filename}")
         return True
+
+    def _load_failed(self, filename: str, message: str) -> bool:
+        if self._mirror:
+            # No backdrop rather than the old map, and no retry (and repeated
+            # message) on every render.
+            self._stop_video()
+            self._original = None
+            self._filename = filename
+            if is_video(filename):      # the table view plays it: its own path
+                print(f"[!] Mirror: {message}")
+        else:
+            print(f"[!] {message}")
+        return False
 
     def _load_video(self, path, filename: str) -> bool:
         try:

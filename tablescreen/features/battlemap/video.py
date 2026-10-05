@@ -56,6 +56,14 @@ def probe(path: Path) -> VideoInfo:
                          float(rate) if rate else 0.0, duration)
 
 
+def first_frame(path: Path) -> Image.Image:
+    """The first decodable frame at full size, as a still."""
+    with av.open(str(path)) as container:
+        for frame in container.decode(video=0):
+            return frame.to_image()
+    raise RuntimeError("no decodable frames")
+
+
 def oversize_warning(info: VideoInfo, filename: str) -> Optional[str]:
     """A warning with the conversion command if playback would be too heavy."""
     too_big = info.width > MAX_SIZE[0] or info.height > MAX_SIZE[1]

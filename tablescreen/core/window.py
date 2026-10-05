@@ -105,6 +105,9 @@ class Window:
         self._slots: dict[str, ContentSlot] = {}
         self._is_fullscreen = False
         self._default_geometry = geometry
+        # "WxH+X+Y" where the window manager first put it; None until mapped.
+        self._initial_geometry: Optional[str] = None
+        self.toplevel.bind("<Map>", self._on_first_map, add="+")
 
         # Callbacks fired after the window geometry changes (fullscreen,
         # restore, resize). Content re-renders itself here — core does not
@@ -114,6 +117,38 @@ class Window:
         # Closing a feature window hides it rather than destroying it, so the
         # feature's content and state survive and can be re-shown.
         self.toplevel.protocol("WM_DELETE_WINDOW", self.hide_window)
+
+    # ── Geometry on record ────────────────────────────────────────────────
+
+    @property
+    def default_geometry(self) -> str:
+        """The geometry the window was created with; `restore()` returns to it."""
+        return self._default_geometry
+
+    @property
+    def initial_geometry(self) -> Optional[str]:
+        """Size and position ("WxH+X+Y") when the window was first mapped,
+        e.g. to open another window in the same place. None until then."""
+        return self._initial_geometry
+
+    def _on_first_map(self, event) -> None:
+        # Child widgets' <Map> events reach this binding too (bindtags).
+        if event.widget is not self.toplevel or self._initial_geometry:
+            return
+        # The window manager may still be settling the position; read it
+        # once the event loop is idle.
+        self.toplevel.after_idle(self._record_initial_geometry)
+
+    def _record_initial_geometry(self) -> None:
+        if self._initial_geometry is None:
+            try:
+                self._initial_geometry = self.toplevel.geometry()
+            except tk.TclError:
+                pass        # destroyed in the meantime
+
+    def on_close(self, callback: Callable[[], None]) -> None:
+        """Replace what the X button does (default: hide the window)."""
+        self.toplevel.protocol("WM_DELETE_WINDOW", callback)
 
     # ── Slots ─────────────────────────────────────────────────────────────
 
@@ -256,7 +291,9 @@ class Window:
         self.toplevel.withdraw()
 
     def show_window(self) -> None:
+        """Un-hide or un-minimise at the current size, in front."""
         self.toplevel.deiconify()
+        self.toplevel.lift()
 
     @property
     def is_fullscreen(self) -> bool:
@@ -298,6 +335,20 @@ class WindowService:
 
     def window_names(self) -> list[str]:
         return sorted(self._windows)
+
+    def remove_window(self, name: str) -> bool:
+        """Destroy the named window and everything in it. A later
+        `get_window(name)` creates a fresh one. Returns False if there was no
+        such window. Content that needs cleanup (threads, images) must be
+        released by its owner first."""
+        window = self._windows.pop(name, None)
+        if window is None:
+            return False
+        try:
+            window.toplevel.destroy()
+        except tk.TclError:
+            pass
+        return True
 
     def destroy_all(self) -> None:
         for window in self._windows.values():

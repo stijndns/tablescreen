@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import platform
+import re
 from typing import Optional
 
 from PIL import Image
@@ -24,12 +25,15 @@ from .model.grid import (COORD_LOCATIONS, COORD_STYLES, GridSettings,
                          pixels_per_inch)
 from .sprite_images import FRAME_MEMORY_WARN_BYTES
 from .video import VIDEO_EXTENSIONS
-from .views.battlemap_view import BattleMapView
+from .views.battlemap_view import BackdropCache, BattleMapView
+from .views.mirror import MirrorView
 
 CURRENT_OS = platform.system()
 
 # A typo like A1:ZZZ9999 would otherwise create millions of cells.
 MAX_FOW_CELLS = 10_000
+
+MIRROR_WINDOW = "battlemap_mirror"
 
 BATTLEMAP_HELP = """\
 Battlemap commands:
@@ -87,6 +91,12 @@ coordinates stay visible):
     map fow reveal <cell|range>     — uncover a cell or range, e.g. B3:D6
     map fow hide <cell|range>       — cover it again
     map fow off                     — remove the fog; reveals are forgotten
+
+DM mirror (a scaled copy of the battlemap in its own window; one at most):
+    map mirror                      — mirror status
+    map mirror show                 — open it where the battlemap window first
+                                      appeared, at its startup size
+    map mirror remove               — close it (its X button does the same)
 """
 
 
@@ -142,6 +152,8 @@ class BattleMapFeature(FeatureBase):
         self.state = BattleMapState()
         self.slot = None
         self.grid_settings = GridSettings()
+        self.backdrops = BackdropCache()      # decoded once for all views
+        self.mirror: Optional[MirrorView] = None
 
     # ── Build ─────────────────────────────────────────────────────────────
 
@@ -156,9 +168,12 @@ class BattleMapFeature(FeatureBase):
         window_name = services.window_name()
         self.slot = services.slot(window_name)
         view = BattleMapView(self.slot.frame, self.grid_settings,
-                             lambda: self._calibration()[0])
+                             lambda: self._calibration()[0],
+                             backdrops=self.backdrops)
         view.pack(fill="both", expand=True)
         self.views.append(view)
+        # The mirror copies this canvas, so it follows its size.
+        view.canvas.bind("<Configure>", lambda e: self._layout_mirror(), add="+")
 
         # Redraw backdrop and grid when the window is resized or fullscreened.
         services.windows.get_window(window_name).on_geometry_change(view.rescale)
@@ -211,6 +226,8 @@ class BattleMapFeature(FeatureBase):
             self._cmd_aoe(rest)
         elif sub == "sprite":
             self._cmd_sprite(rest)
+        elif sub == "mirror":
+            self._cmd_mirror(rest)
         else:
             print(f"[!] Unknown map sub-command '{sub}'. Type 'map help'.")
 
@@ -337,6 +354,13 @@ class BattleMapFeature(FeatureBase):
                   f"changed, {len(state.fow_revealed)} revealed in total.")
         else:
             print("Usage: map fow [on | off | reveal <cell|range> | hide <cell|range>]")
+
+    def _cmd_mirror(self, rest: list[str]) -> None:
+        action = rest[0].lower() if rest else "status"
+        if action in ("status", "show", "remove") and len(rest) <= 1:
+            self.services.send(self.name, "mirror", action)   # windows: mainloop
+        else:
+            print("Usage: map mirror [show | remove]")
 
     def _cmd_aoe(self, rest: list[str]) -> None:
         action = rest[0].lower() if rest else ""
@@ -518,11 +542,64 @@ class BattleMapFeature(FeatureBase):
             elif action == "location":
                 view.set_coords_location(value)
             print(self._coords_report(action, view, style, scale))
+        elif message.command == "mirror":
+            {"show": self._mirror_show, "remove": self._mirror_remove,
+             "status": self._mirror_status}[message.arg]()
         elif message.command == "sprite_changed":
             verb, sprite, old_area, style, scale = message.arg
             self.slot.show()
             self.refresh()
             print(self._sprite_report(verb, sprite, old_area, style, scale))
+
+    # ── DM mirror (mainloop thread) ───────────────────────────────────────
+
+    def _mirror_show(self) -> None:
+        windows = self.services.windows
+        if self.mirror is not None:
+            windows.get_window(MIRROR_WINDOW).show_window()
+            print("[i] The mirror is already open (one at most); "
+                  "brought it to the front.")
+            return
+        table = windows.get_window(self.services.window_name())
+        geometry = table.initial_geometry or table.default_geometry
+        window = windows.get_window(MIRROR_WINDOW, geometry)
+        window.on_close(self._mirror_remove)
+        slot = window.slot(self.name)
+        self.mirror = MirrorView(slot.frame, self.views[0],
+                                 lambda: self._calibration()[0], self.grid_settings,
+                                 self.backdrops, _geometry_size(table.default_geometry))
+        self.views.append(self.mirror)
+        slot.show()
+        self.mirror.render(self.snapshot())
+        print(f"[+] Mirror opened at {geometry}. "
+              f"Close it with 'map mirror remove' or its X button.")
+
+    def _mirror_remove(self) -> None:
+        if self.mirror is None:
+            print("[i] There is no mirror to remove.")
+            return
+        self.mirror.close()             # stops background work first
+        self.views.remove(self.mirror)
+        self.mirror = None
+        self.services.windows.remove_window(MIRROR_WINDOW)
+        print("[+] Mirror removed.")
+
+    def _mirror_status(self) -> None:
+        if self.mirror is None:
+            print("Mirror: none. Open one with 'map mirror show'.")
+            return
+        top = self.services.windows.get_window(MIRROR_WINDOW).toplevel
+        width, height = self.mirror.map_size()
+        scale = self.mirror.scale
+        cell = self.mirror.view.current_cell_px()
+        print(f"Mirror: window {top.winfo_width()}x{top.winfo_height()}, map "
+              f"{width}x{height}"
+              + (f" ({scale:.2f}x the battlemap)" if scale else "")
+              + (f", cells {cell:.1f} px." if cell else ", cell size unknown."))
+
+    def _layout_mirror(self) -> None:
+        if self.mirror is not None:
+            self.mirror.layout()
 
     # ── Grid calibration (mainloop thread — reads Tk geometry) ────────────
 
@@ -627,7 +704,7 @@ class BattleMapFeature(FeatureBase):
     def complete_battlemap(self, text, line, begidx, endidx) -> list[str]:
         parts = get_arg_parts(line[:begidx])
         top_subs = ["show", "bgclear", "fullscreen", "restore", "grid", "coords",
-                    "sprite", "aoe", "fow"]
+                    "sprite", "aoe", "fow", "mirror"]
 
         if len(parts) == 1:
             return [s for s in top_subs if s.startswith(text)]
@@ -653,6 +730,8 @@ class BattleMapFeature(FeatureBase):
             else:
                 options = ()
             return [s for s in options if s.startswith(text)]
+        if sub == "mirror" and len(parts) == 2:
+            return [o for o in ("show", "remove") if o.startswith(text.lower())]
         if sub == "fow" and len(parts) == 2:
             return [o for o in ("on", "off", "reveal", "hide") if o.startswith(text.lower())]
         if sub == "aoe":
@@ -686,5 +765,11 @@ class BattleMapFeature(FeatureBase):
                 return [s.name for s in self.state.sprites
                         if s.name.lower().startswith(text.lower())]
         return []
+
+def _geometry_size(geometry: str) -> tuple[int, int]:
+    """(width, height) from a Tk geometry string like "1200x900+10+20"."""
+    m = re.match(r"(\d+)x(\d+)", geometry)
+    return (int(m[1]), int(m[2])) if m else (800, 600)
+
 
 FEATURE = BattleMapFeature()

@@ -129,6 +129,27 @@ def cell_to_pixels(*, row: int, col: int, cell: float) -> tuple[float, float]:
     return (col - 1) * cell, (row - 1) * cell
 
 
+def pixels_to_cell(x: float, y: float, cell: float) -> tuple[int, int]:
+    """The (row, col) containing pixel (x, y); inverse of cell_to_pixels. A
+    pixel on a grid line belongs to the cell right of / below it. Rows or
+    columns < 1 mean the pixel is above or left of the grid."""
+    if cell <= 0:
+        raise ValueError("cell size must be positive")
+    # Tolerance: (col - 1) * cell / cell can land a hair below a whole number.
+    return math.floor(y / cell + 1e-9) + 1, math.floor(x / cell + 1e-9) + 1
+
+
+def letterbox(content: tuple[int, int], box: tuple[int, int]) -> tuple[float, int, int]:
+    """Largest uniform scale at which ``content`` (width, height) fits in
+    ``box``, and the scaled size: (scale, width, height). The rest of the box
+    is bars."""
+    (cw, ch), (bw, bh) = content, box
+    if min(cw, ch, bw, bh) <= 0:
+        raise ValueError("sizes must be positive")
+    scale = min(bw / cw, bh / ch)
+    return scale, min(bw, round(cw * scale)), min(bh, round(ch * scale))
+
+
 def grid_line_positions(extent_px: float, cell: float) -> list[float]:
     """Offsets of every grid line from 0 up to and including ``extent_px``.
 
