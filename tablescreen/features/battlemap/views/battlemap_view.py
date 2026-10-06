@@ -5,6 +5,8 @@ One canvas in tagged layers: backdrop → sprites → fog → aoe → grid → c
 (bottom to top).
 The backdrop is a static image or a streamed video (see animation.py); it is
 expensive, so other layers never force it to redraw. Mainloop thread only.
+A mirror view (see mirror.py) differs in three ways: a video backdrop is a
+still, loading is quiet, and fog is see-through for the DM.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import weakref
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 from ..styling import *
 from ..model.aoe import AoE, aoe_cells
@@ -34,6 +36,8 @@ SPRITES_TAG = "sprites"
 FOG_TAG = "fog"
 AOE_TAG = "aoe"
 FOG_COLOR = "black"     # opaque: Tk canvases have no transparency
+# Mirror fog: an RGBA image (photo images do blend), so the DM sees under it.
+MIRROR_FOG_ALPHA = 150  # of 255
 GRID_TAG = "grid"
 COORDS_TAG = "coords"
 
@@ -104,6 +108,8 @@ class BattleMapView(tk.Frame):
         self._aoes: tuple = ()              # from the snapshot
         self._fow_on = False                # from the snapshot
         self._fow_revealed: frozenset = frozenset()
+        self._fog_key: Optional[tuple] = None   # what the mirror's overlay shows
+        self._fog_photo: Optional[ImageTk.PhotoImage] = None
         self._sprite_sources: dict[str, Optional[SpriteSource]] = {}   # None = failed
         # Keyed by (file, rotation, w, h); only keys currently in use.
         self._sprite_frames: dict[tuple, list[ImageTk.PhotoImage]] = {}
@@ -349,6 +355,9 @@ class BattleMapView(tk.Frame):
 
     def _draw_fog(self, width: int, height: int) -> None:
         """Opaque cover over every hidden cell, one rectangle per run of a row."""
+        if self._mirror:
+            self._draw_see_through_fog(width, height)
+            return
         self.canvas.delete(FOG_TAG)
         if not self._fow_on:
             return
@@ -363,6 +372,26 @@ class BattleMapView(tk.Frame):
                 x, y, w, h = area_to_pixels(CellArea(row, first, row, last), cell)
                 self.canvas.create_rectangle(x, y, min(x + w, width), min(y + h, height),
                                              fill=FOG_COLOR, width=0, tags=FOG_TAG)
+        self._restack()
+
+    def _draw_see_through_fog(self, width: int, height: int) -> None:
+        """Mirror: one semi-transparent image over the hidden cells, rebuilt
+        only when it would look different (it costs a few ms)."""
+        cell = self.current_cell_px()
+        if not cell or cell < self.min_cell_px:
+            cell = None             # unknown or too small: shade everything
+        key = (width, height, cell, self._fow_revealed) if self._fow_on else None
+        if key == self._fog_key and self.canvas.find_withtag(FOG_TAG):
+            return
+        self._fog_key = key
+        self.canvas.delete(FOG_TAG)
+        self._fog_photo = None
+        if key is None:
+            return
+        self._fog_photo = ImageTk.PhotoImage(
+            fog_overlay(width, height, cell, self._fow_revealed, MIRROR_FOG_ALPHA))
+        self.canvas.create_image(0, 0, image=self._fog_photo, anchor="nw",
+                                 tags=FOG_TAG)
         self._restack()
 
     # ── Areas of effect ───────────────────────────────────────────────────
@@ -500,6 +529,25 @@ class BattleMapView(tk.Frame):
             if x2 > width or y2 > height:
                 self.canvas.delete(shadow, text)
         self._restack()
+
+
+def fog_overlay(width: int, height: int, cell: Optional[float],
+                revealed: frozenset, alpha: int) -> Image.Image:
+    """RGBA image: black at ``alpha`` over hidden cells, clear over revealed
+    ones. ``cell`` None shades everything."""
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    shade = (0, 0, 0, alpha)
+    if cell is None:
+        draw.rectangle((0, 0, width - 1, height - 1), fill=shade)
+        return overlay
+    rows, cols = math.ceil(height / cell), math.ceil(width / cell)
+    for row, first, last in fog_runs(rows, cols, revealed):
+        x, y, w, h = area_to_pixels(CellArea(row, first, row, last), cell)
+        # Rounded edges, inclusive: neighbouring runs meet without a gap.
+        draw.rectangle((round(x), round(y), round(x + w) - 1, round(y + h) - 1),
+                       fill=shade)
+    return overlay
 
 
 def _hatch(x: float, y: float, cell: float, spacing: float):
