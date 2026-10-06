@@ -95,6 +95,10 @@ class BattleMapView(tk.Frame):
         self._coords_location = grid_settings.coords_location
         self._grid_scale_pct = 100.0
         self._coords_style = grid_settings.coords_style
+        # Below this, sprites, fog and AoEs aren't drawn per cell. A mirror
+        # sets it to the table's threshold at its scale, so it never shows
+        # less than the table. The grid always uses MIN_CELL_PX (noise).
+        self.min_cell_px = MIN_CELL_PX
 
         self._sprites: tuple = ()           # from the snapshot
         self._aoes: tuple = ()              # from the snapshot
@@ -274,7 +278,7 @@ class BattleMapView(tk.Frame):
         items: dict[tuple, list[int]] = {}
         self._sprite_keys = {}              # name → frames key
 
-        for sprite in self._sprites if cell and cell >= MIN_CELL_PX else ():
+        for sprite in self._sprites if cell and cell >= self.min_cell_px else ():
             x, y, box_w, box_h = area_to_pixels(sprite.area, cell)
             if x >= width or y >= height:
                 continue                    # whole footprint off the canvas
@@ -349,7 +353,7 @@ class BattleMapView(tk.Frame):
         if not self._fow_on:
             return
         cell = self.current_cell_px()
-        if not cell or cell < MIN_CELL_PX:
+        if not cell or cell < self.min_cell_px:
             # Cell size unknown or too small to show reveals: hide everything.
             self.canvas.create_rectangle(0, 0, width, height, fill=FOG_COLOR,
                                          width=0, tags=FOG_TAG)
@@ -367,7 +371,7 @@ class BattleMapView(tk.Frame):
         """Hatching (Tk has no transparency) + an outline + an origin dot."""
         self.canvas.delete(AOE_TAG)
         cell = self.current_cell_px()
-        if not cell or cell < MIN_CELL_PX:
+        if not cell or cell < self.min_cell_px:
             return
         spacing = max(4.0, cell / 6)
         hatch_w, edge_w = max(1, round(cell / 44)), max(2, round(cell / 22))
@@ -405,6 +409,14 @@ class BattleMapView(tk.Frame):
     @property
     def show_grid(self) -> bool:
         return self._show_grid
+
+    @property
+    def coords_style(self) -> str:
+        return self._coords_style
+
+    @property
+    def label_color(self) -> str:
+        return self._label_color
 
     def set_show_grid(self, on: bool) -> None:
         """Show or hide this view's grid. Redraws only the grid layer."""

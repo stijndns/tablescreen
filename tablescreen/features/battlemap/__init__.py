@@ -97,6 +97,9 @@ DM mirror (a scaled copy of the battlemap in its own window; one at most):
     map mirror show                 — open it where the battlemap window first
                                       appeared, at its startup size
     map mirror remove               — close it (its X button does the same)
+    map mirror grid on | off        — the mirror's own grid (starts on)
+    map mirror coords on | off      — rulers with coordinates around the
+                                      mirror's map (start on)
 """
 
 
@@ -356,11 +359,12 @@ class BattleMapFeature(FeatureBase):
             print("Usage: map fow [on | off | reveal <cell|range> | hide <cell|range>]")
 
     def _cmd_mirror(self, rest: list[str]) -> None:
-        action = rest[0].lower() if rest else "status"
-        if action in ("status", "show", "remove") and len(rest) <= 1:
-            self.services.send(self.name, "mirror", action)   # windows: mainloop
+        words = [w.lower() for w in rest] or ["status"]
+        if (words[0] in ("status", "show", "remove") and len(words) == 1
+                or words[0] in ("grid", "coords") and words[1:] in (["on"], ["off"])):
+            self.services.send(self.name, "mirror", tuple(words))  # mainloop
         else:
-            print("Usage: map mirror [show | remove]")
+            print("Usage: map mirror [show | remove | grid on|off | coords on|off]")
 
     def _cmd_aoe(self, rest: list[str]) -> None:
         action = rest[0].lower() if rest else ""
@@ -543,8 +547,12 @@ class BattleMapFeature(FeatureBase):
                 view.set_coords_location(value)
             print(self._coords_report(action, view, style, scale))
         elif message.command == "mirror":
-            {"show": self._mirror_show, "remove": self._mirror_remove,
-             "status": self._mirror_status}[message.arg]()
+            action, *args = message.arg
+            if action in ("grid", "coords"):
+                self._mirror_setting(action, args[0] == "on")
+            else:
+                {"show": self._mirror_show, "remove": self._mirror_remove,
+                 "status": self._mirror_status}[action]()
         elif message.command == "sprite_changed":
             verb, sprite, old_area, style, scale = message.arg
             self.slot.show()
@@ -595,7 +603,19 @@ class BattleMapFeature(FeatureBase):
         print(f"Mirror: window {top.winfo_width()}x{top.winfo_height()}, map "
               f"{width}x{height}"
               + (f" ({scale:.2f}x the battlemap)" if scale else "")
-              + (f", cells {cell:.1f} px." if cell else ", cell size unknown."))
+              + (f", cells {cell:.1f} px" if cell else ", cell size unknown")
+              + f"; grid {_on_off(self.mirror.show_grid)}, "
+                f"coords {_on_off(self.mirror.show_rulers)}.")
+
+    def _mirror_setting(self, setting: str, on: bool) -> None:
+        if self.mirror is None:
+            print("[i] There is no mirror. Open one with 'map mirror show'.")
+            return
+        if setting == "grid":
+            self.mirror.set_show_grid(on)
+        else:
+            self.mirror.set_show_rulers(on)
+        print(f"[+] Mirror {setting} {_on_off(on)}.")
 
     def _layout_mirror(self) -> None:
         if self.mirror is not None:
@@ -730,8 +750,14 @@ class BattleMapFeature(FeatureBase):
             else:
                 options = ()
             return [s for s in options if s.startswith(text)]
-        if sub == "mirror" and len(parts) == 2:
-            return [o for o in ("show", "remove") if o.startswith(text.lower())]
+        if sub == "mirror":
+            if len(parts) == 2:
+                options = ("show", "remove", "grid", "coords")
+            elif len(parts) == 3 and parts[2].lower() in ("grid", "coords"):
+                options = ("on", "off")
+            else:
+                options = ()
+            return [o for o in options if o.startswith(text.lower())]
         if sub == "fow" and len(parts) == 2:
             return [o for o in ("on", "off", "reveal", "hide") if o.startswith(text.lower())]
         if sub == "aoe":
@@ -765,6 +791,10 @@ class BattleMapFeature(FeatureBase):
                 return [s.name for s in self.state.sprites
                         if s.name.lower().startswith(text.lower())]
         return []
+
+def _on_off(on: bool) -> str:
+    return "on" if on else "off"
+
 
 def _geometry_size(geometry: str) -> tuple[int, int]:
     """(width, height) from a Tk geometry string like "1200x900+10+20"."""

@@ -297,6 +297,30 @@ def fog_runs(rows: int, cols: int,
     return runs
 
 
+# Mirror rulers: label every n-th cell when one cell is too small for a label.
+RULER_STEPS = (1, 2, 5, 10, 20, 50, 100)
+
+
+def ruler_step(cell: float, needed_px: float) -> Optional[int]:
+    """Smallest step whose spacing (step × cell) fits a label needing
+    ``needed_px``; None if not even the largest step does."""
+    return next((step for step in RULER_STEPS if step * cell >= needed_px), None)
+
+
+def ruler_marks(extent_px: float, cell: float, step: int) -> list[tuple[int, float]]:
+    """(index, centre offset) of the labelled cells along one edge: every
+    cell for step 1, else every step-th (step, 2·step, ...). Only cells whose
+    centre is within ``extent_px``."""
+    if cell <= 0:
+        raise ValueError("cell size must be positive")
+    marks = []
+    for i in range(1, math.ceil(extent_px / cell) + 1):
+        centre = cell_to_pixels(row=1, col=i, cell=cell)[0] + cell / 2
+        if centre < extent_px and (step == 1 or i % step == 0):
+            marks.append((i, centre))
+    return marks
+
+
 def label_font_px(cell: float, location: str) -> Optional[int]:
     """Label font size in pixels for this cell size, or None if too small."""
     fraction = SIDE_FONT_FRACTION if location == "sides" else CELL_FONT_FRACTION
