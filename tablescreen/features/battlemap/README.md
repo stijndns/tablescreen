@@ -1,6 +1,6 @@
 # Battlemap
 
-The battlemap feature turns a screen, typically a TV lying flat under glass, into a battle map for physical miniatures. It shows a backdrop (a still image or a looping video), draws a grid whose cells are exactly one inch on the physical screen, labels cells with coordinates, and places sprites and areas of effect on the grid.
+The battlemap feature turns a screen, typically a TV lying flat under glass, into a battle map for physical miniatures. It shows a backdrop (a still image or a looping video), draws a grid whose cells are exactly one inch on the physical screen, labels cells with coordinates, and places sprites and areas of effect on the grid. A scaled copy of the map can be opened on the game master's own screen.
 
 ![An animated battlemap with grid, coordinate labels, an animated sprite and an area of effect](../../../docs/screenshots/battlemap.gif)
 
@@ -200,7 +200,26 @@ Reveals add up, and `map fow` on its own prints whether fog is on and how many c
 
 The fog hides the backdrop and the sprites under it, which allows traps, treasure or monsters to be placed in advance; they appear when their cells are revealed. Areas of effect, the grid and the coordinate labels are drawn on top of the fog and stay visible. Loading a different backdrop with `map show` keeps the fog on or off as it was; when it is on, the new map starts fully hidden.
 
-The fog is opaque because Tk canvases do not support transparency. Reveals are stored in cells, like sprites, so they follow `map grid resize`; the backdrop does not change with the grid, so after a resize a revealed area no longer covers exactly the same part of the map image.
+The fog is opaque because Tk canvases do not support transparency; on the [game master mirror](#game-master-mirror) it is drawn see-through instead. Reveals are stored in cells, like sprites, so they follow `map grid resize`; the backdrop does not change with the grid, so after a resize a revealed area no longer covers exactly the same part of the map image.
+
+## Game master mirror
+
+`map mirror show` opens the mirror: a second window with a scaled copy of the battlemap, meant for the game master's own screen. It shows the same backdrop, sprites, areas of effect and fog of war as the table screen, on the same cells. At most one mirror is open at a time; `map mirror show` while it is open brings it to the front.
+
+<!-- Space for a screenshot: docs/screenshots/battlemap_mirror.png -->
+
+The mirror opens where the battlemap window first appeared when the program started, at the same size. On Windows that position is chosen by Windows, usually on the primary display, before the battlemap window is moved to the table screen. `map mirror remove` closes the mirror, and so does its close button; closing it releases the memory it uses, and the next `map mirror show` opens it at the starting position again. `map mirror` on its own prints the size of the window, the size of the map inside it and the cell size.
+
+The mirror is a copy of the table window, not a second calibrated screen. The table's map is scaled down uniformly to fit the mirror window, and black bars fill the remaining space, so the mirror always shows the same cells as the table, including the partial cells at the right and bottom edges. It follows the table when the table changes, for example after `map fullscreen` or `map grid resize`. Resizing the mirror window only changes how large the copy is drawn.
+
+The mirror differs from the table screen in four ways:
+
+- **Its own grid and coordinates.** `map mirror grid on|off` and `map mirror coords on|off` control the mirror only, and both are on when it opens. `map grid on|off` and `map coords on|off|location` control the table only. The coordinate style (`map coords style`) applies to both.
+- **Rulers instead of labels.** Coordinates are shown as rulers outside the map: column numbers above it and row labels to its left. Their font size is fixed and follows the display scaling, so they stay readable however small the cells are. When a cell is too small for its label, the rulers label every 2nd, 5th, 10th, ... cell.
+- **See-through fog.** Hidden cells are darkened rather than black, so the game master sees what is under the fog, including sprites placed in hidden areas. Tk canvas shapes cannot be transparent, but images can, so the mirror's fog is drawn as one semi-transparent image.
+- **Still video backdrops.** A `.webm` backdrop is shown as a still image of its first frame, so the video is not decoded a second time.
+
+Nothing done to the mirror changes the battlemap itself. `map mirror grid` and `map mirror coords` only change what the mirror shows, the cell size always comes from the table, and resizing or closing the mirror leaves the table screen untouched.
 
 ## Command reference
 
@@ -234,6 +253,11 @@ The fog is opaque because Tk canvases do not support transparency. Reveals are s
 | `map fow` | Fog of war status |
 | `map fow on` / `off` | Hide the whole map / remove the fog (and forget reveals) |
 | `map fow reveal <cell or range>` / `hide <cell or range>` | Uncover or cover part of the map |
+| `map mirror` | Mirror status |
+| `map mirror show` | Open the game master mirror, or bring it to the front |
+| `map mirror remove` | Close the mirror (same as its close button) |
+| `map mirror grid on` / `off` | Show or hide the mirror's grid lines |
+| `map mirror coords on` / `off` | Show or hide the mirror's coordinate rulers |
 
 ## How it is drawn
 
@@ -241,19 +265,20 @@ Everything is drawn on a single Tk canvas in layers, from bottom to top: backdro
 
 Only the backdrop is expensive to redraw: scaling a 4K image takes noticeable time and memory. Changes to the other layers never cause the backdrop to be redrawn, and a video backdrop reuses one image for every frame.
 
-The shared state (backdrop, cell scale, coordinate style, sprites and areas of effect) lives in `BattleMapState`. What a particular window shows, such as whether the grid or labels are visible and where the labels go, belongs to the view. This keeps a possible second view, for example a copy of the map on the game master's screen, consistent with the table.
+The shared state (backdrop, cell scale, coordinate style, sprites, areas of effect and fog of war) lives in `BattleMapState`. What a particular window shows, such as whether the grid or labels are visible and where the labels go, belongs to the view. The table screen and the [mirror](#game-master-mirror) are two views of the same state, which keeps them consistent; the mirror's view derives its cell size from the table's view and reads the state without changing it. Both views share the decoded backdrop image, so the mirror does not hold a second full-resolution copy.
 
 ## Files
 
 | File | Contents |
 |---|---|
 | `__init__.py` | The feature: `map` commands, reports, grid calibration and tab completion |
-| `model/battlemap_state.py` | Shared state: backdrop, cell scale, coordinate style, sprites, areas of effect |
-| `model/grid.py` | Calibration, cell geometry, coordinate parsing and labels, cell ranges |
+| `model/battlemap_state.py` | Shared state: backdrop, cell scale, coordinate style, sprites, areas of effect, fog of war |
+| `model/grid.py` | Calibration, cell geometry, coordinate parsing and labels, cell ranges, mirror scaling and rulers |
 | `model/aoe.py` | Area of effect command parsing and the cells each shape covers |
 | `sprite_images.py` | Reading, rotating and scaling sprite images and animation frames |
 | `video.py` | Streaming `.webm` decoder running on a background thread |
 | `views/battlemap_view.py` | The canvas and its layers |
+| `views/mirror.py` | The game master mirror: the scaled copy of the table view and its rulers |
 | `views/animation.py` | The shared animation clock, the video backdrop and sprite animations |
 | `styling.py` | Colours used by the view |
 
