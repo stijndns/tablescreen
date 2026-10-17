@@ -1,8 +1,8 @@
 """
 commands.py — The combat tracker's shell commands.
 
-All of these run on the SHELL thread. They mutate the combat model, write to
-the log, and then ask the feature to refresh — which sends a bus message so
+All of these run on the executor thread. They mutate the combat model, write
+to the log, and then ask the feature to refresh — which sends a bus message so
 the redraw happens on the mainloop thread.
 
 Commands live in a mixin rather than on the feature class itself only to
@@ -10,8 +10,8 @@ keep this file to one concern; ``CombatFeature`` inherits it and supplies
 ``self.combat``, ``self.log`` and ``self.refresh_views()``.
 
 Some commands call into ``prompts`` and ``persistence``, both of which block
-on ``input()``. That is safe here (shell thread) and would not be inside a
-bus consumer.
+on core's ``ask()`` until the answer is typed. That is safe here (executor
+thread) and would not be inside a bus consumer.
 """
 
 from __future__ import annotations

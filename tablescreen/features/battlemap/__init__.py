@@ -194,7 +194,7 @@ class BattleMapFeature(FeatureBase):
     def snapshot(self) -> dict:
         return self.state.snapshot()
 
-    # ── Commands (shell thread — state and messages only) ─────────────────
+    # ── Commands (executor thread — state and messages only) ──────────────
 
     def do_battlemap(self, arg: str) -> None:
         parts = get_arg_parts(arg)

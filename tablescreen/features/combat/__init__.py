@@ -8,7 +8,7 @@ replaced the image, without either feature knowing about the other.
 
 Threading, as everywhere:
 
-  * ``do_*`` handlers (in commands.py) run on the SHELL thread. They mutate
+  * ``do_*`` handlers (in commands.py) run on the EXECUTOR thread. They mutate
     the model and log, then call ``refresh_views()``, which only *sends* a
     message.
   * ``_on_message`` runs on the MAINLOOP thread and does the drawing.
@@ -94,10 +94,10 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
     def snapshot(self) -> dict:
         return self.combat.snapshot()
 
-    # ── Called from commands (shell thread) ───────────────────────────────
+    # ── Called from commands (executor thread) ────────────────────────────
 
     def refresh_views(self, page: int | None = None, follow_current: bool = False) -> None:
-        """Ask the mainloop to redraw. Safe from the shell thread.
+        """Ask the mainloop to redraw. Safe from the executor thread.
         follow_current: show the active combatant's page (only the view knows
         its page size, so the shell can't compute the page number itself)."""
         self.services.send(self.name, "update", FOLLOW_CURRENT if follow_current else page)

@@ -5,7 +5,7 @@ Self-contained serialisation: no bus, no views, no feature state. Takes a
 Combat to read from or write into, and reports what it did.
 
 Import prompts for each combatant's initiative, so like prompts.py this runs
-on the shell thread and must not be called from a bus consumer.
+on the executor thread and must not be called from a bus consumer.
 
 Files live in the project's ``combatants/`` directory, resolved through
 core.paths so it works regardless of the working directory.
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 
+from ...core.console import ask
 from ...core.paths import COMBATANT_IMAGES_DIR, COMBATANTS_DIR, ensure_dir
 from . import prompts
 from .model import Combat, Combatant, Status
@@ -182,7 +183,7 @@ def _resolve_new_ties(combat: Combat, added: list[Combatant]) -> None:
 def _prompt_initiative(name: str, ctype: str, hp_max: int) -> int:
     while True:
         try:
-            raw = input(f"  Initiative for {name} ({ctype.upper()}, {hp_max} HP): ")
+            raw = ask(f"  Initiative for {name} ({ctype.upper()}, {hp_max} HP): ")
             return int(raw.strip())
         except ValueError:
             print("  [!] Please enter an integer.")

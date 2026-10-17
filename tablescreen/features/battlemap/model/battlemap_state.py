@@ -1,7 +1,7 @@
 """
 battlemapstate.py — Battlemap state model for Tablescreen.
 
-Mutated on the shell thread, handed to views as a snapshot. Only what every
+Mutated on the executor thread, handed to views as a snapshot. Only what every
 view must agree on lives here (cell scale, coordinate notation); what a view
 shows, and where, lives on the view.
 """

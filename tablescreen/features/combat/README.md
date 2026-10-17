@@ -196,4 +196,4 @@ The shortcuts (`next`, `hp`, `temphp`, `maxhp`, `resource`, `condition` and `pag
 | `views/combatant_view.py` | One row on the combat screen |
 | `views/styling.py` | Colours, fonts and sizes of the combat screen |
 
-Everything in `prompts.py` waits for input in the shell, so it only ever runs on the shell thread; see [the core documentation](../../core/README.md#threading).
+Everything in `prompts.py` waits for an answer typed in the console (core's `ask()`), so it only ever runs inside a command, on the executor thread; see [the core documentation](../../core/README.md#threading). If no answer can come (end of input), the command is cancelled.

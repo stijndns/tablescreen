@@ -1,10 +1,11 @@
 """
 prompts.py — Interactive questions asked of the DM mid-command.
 
-Everything here calls ``input()``, which means it blocks the SHELL thread
-waiting for typed input. That has a hard consequence: none of this can move
-into a view or a bus consumer, because those run on the mainloop thread and
-blocking there would freeze the display.
+Everything here calls core's ``ask()``, which blocks the executor thread
+until the answer is typed in the console. That has a hard consequence: none
+of this can move into a view or a bus consumer, because those run on the
+mainloop thread and blocking there would freeze the display. At end of input
+``ask()`` raises NoAnswer, which cancels the command.
 
 Kept in its own module so that constraint is visible rather than buried
 among the command handlers.
@@ -15,6 +16,7 @@ on, so they carry no feature state of their own.
 
 from __future__ import annotations
 
+from ...core.console import ask
 from .model import Combat, Combatant, Status
 
 # Resource keys these prompts may return.
@@ -44,7 +46,7 @@ def prompt_zero_hp_status(combatant: Combatant) -> Status:
 
     while True:
         try:
-            index = int(input("    > ").strip()) - 1
+            index = int(ask("    > ").strip()) - 1
             if not 0 <= index < len(options):
                 raise ValueError
             return options[index]
@@ -100,7 +102,7 @@ def prompt_resource_spend(combat: Combat, actor: Combatant) -> str:
 
     while True:
         try:
-            index = int(input("    > ").strip()) - 1
+            index = int(ask("    > ").strip()) - 1
             if not 0 <= index < len(options):
                 raise ValueError
             return options[index][0]
@@ -132,7 +134,7 @@ def resolve_ties_for(combat: Combat, initiative: int, tied: list) -> None:
 
     while True:
         try:
-            raw = input("    > ").strip().split()
+            raw = ask("    > ").strip().split()
             if len(raw) != len(names):
                 raise ValueError
             positions = [int(x) for x in raw]

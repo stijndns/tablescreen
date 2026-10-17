@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from ...core.console import ask
 from ...core.paths import LOGS_DIR, ensure_dir
 
 class CombatLog:
@@ -39,7 +40,7 @@ class CombatLog:
             return True
         print("[!] Combat log has unsaved entries.")
         while True:
-            ans = input("    Discard log and continue? (Y/N): ").strip().upper()
+            ans = ask("    Discard log and continue? (Y/N): ").strip().upper()
             if ans == "Y":
                 return True
             if ans == "N":

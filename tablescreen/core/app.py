@@ -7,15 +7,18 @@ This is the only place that knows how the pieces fit together:
     root (hidden) ─►  owns the mainloop; every feature window is a Toplevel
     MessageBus    ─►  the one queue; input threads produce, mainloop consumes
     WindowService ─►  vends named windows and content slots
-    Shell         ─►  neutral cmd.Cmd host, daemon thread, feeds the bus
+    Shell         ─►  neutral cmd.Cmd host: the command registry and dispatch
+    Executor      ─►  the one thread that runs commands, from every source
+    Console       ─►  reads the keyboard; feeds the executor, answers ask()
 
 Features are loaded by name with importlib, so core never imports a
 feature module directly.
 
 Threading: the Tk mainloop runs on the main thread and is the application's
-lifecycle — when it ends, the app ends. The shell runs as a daemon thread
-beside it. Potential future input sources join as further daemons feeding the same bus;
-nothing about a feature changes.
+lifecycle — when it ends, the app ends. Beside it run two daemons: the
+console (keyboard) and the executor (runs commands, changes state, sends on
+the bus). Other input sources, such as the battlemap mirror's mouse input,
+submit commands to the same executor; nothing about a feature changes.
 """
 
 from __future__ import annotations
@@ -23,13 +26,15 @@ from __future__ import annotations
 import importlib
 import platform
 import re
-import threading
 import tkinter as tk
 import tomllib
 from pathlib import Path
 from typing import Any, Optional
 
+from . import console
 from .bus import MessageBus, Message, APP_TARGET
+from .console import Console
+from .executor import APP_SOURCE, SHELL_SOURCE, CommandExecutor
 from .feature import Feature, ShellServices
 from .shell import Shell
 from .window import WindowService
@@ -148,6 +153,13 @@ class Application:
         self.bus = MessageBus(self.root)
         self.windows = WindowService(self.root, window_geometries(self.config))
         self.shell = Shell(self.bus, intro_lines=self._intro_lines())
+        # The executor ending (normally via `exit`) always ends the app, so
+        # the windows never outlive the shell.
+        self.executor = CommandExecutor(
+            self.shell,
+            on_stop=lambda: self.bus.send(APP_TARGET, "exit", source=APP_SOURCE))
+        self.console = Console(self.shell, self.executor)
+        console.install(self.console)       # backs core.console.ask()
         self.features: dict[str, Feature] = {}
         self._shutting_down = False
 
@@ -192,12 +204,29 @@ class Application:
         def subscribe(consumer):
             self.bus.register_consumer(name, consumer)
 
+        def send(target, command, arg=None):
+            # Stamped with the source of the command being run, if any.
+            self.bus.send(target, command, arg,
+                          source=self.executor.current_source())
+
+        def execute(line, source):
+            # Only this feature's own commands, and never as the keyboard:
+            # "shell" commands may ask() and only the console can answer.
+            words = line.split(maxsplit=1)
+            if not words or self.shell.command_owner(words[0]) != name:
+                raise ValueError(f"'{name}' can only execute its own commands, "
+                                 f"not {line!r}")
+            if not source or source == SHELL_SOURCE:
+                raise ValueError(f"source must name the input, not {source!r}")
+            self.executor.submit(line, source)
+
         return ShellServices(
             feature_name=name,
             register_command=register_command,
             windows=self.windows,
-            send=self.bus.send,
+            send=send,
             subscribe=subscribe,
+            execute=execute,
             config=feature_config(self.config, name),
         )
 
@@ -230,20 +259,15 @@ class Application:
         except tk.TclError:
             pass
 
-    def _shell_thread(self) -> None:
-        try:
-            self.shell.cmdloop()
-        except Exception as exc:
-            print(f"[!] Shell terminated: {exc}")
-
     def run(self) -> None:
-        """Build everything, start the shell daemon, run the mainloop."""
+        """Build everything, start the executor and console, run the mainloop."""
         self.build_features()
 
         if not self.features:
             print("[!] No features loaded — check 'enabled' in config.toml.")
 
-        threading.Thread(target=self._shell_thread, daemon=True).start()
+        self.executor.start()
+        self.console.start()
 
         try:
             self.root.mainloop()
