@@ -206,7 +206,7 @@ The fog is opaque because Tk canvases do not support transparency; on the [game 
 
 `map mirror show` opens the mirror: a second window with a scaled copy of the battlemap, meant for the game master's own screen. It shows the same backdrop, sprites, areas of effect and fog of war as the table screen, on the same cells. At most one mirror is open at a time; `map mirror show` while it is open brings it to the front.
 
-<!-- Space for a screenshot: docs/screenshots/battlemap_mirror.png -->
+![The game master mirror: rulers, see-through fog with a revealed room and an area of effect, and a fog reveal being dragged with the mouse](../../../docs/screenshots/battlemap_mirror.png)
 
 The mirror opens where the battlemap window first appeared when the program started, at the same size. On Windows that position is chosen by Windows, usually on the primary display, before the battlemap window is moved to the table screen. `map mirror remove` closes the mirror, and so does its close button; closing it releases the memory it uses, and the next `map mirror show` opens it at the starting position again. `map mirror` on its own prints the size of the window, the size of the map inside it and the cell size.
 
@@ -219,7 +219,33 @@ The mirror differs from the table screen in four ways:
 - **See-through fog.** Hidden cells are darkened rather than black, so the game master sees what is under the fog, including sprites placed in hidden areas. Tk canvas shapes cannot be transparent, but images can, so the mirror's fog is drawn as one semi-transparent image.
 - **Still video backdrops.** A `.webm` backdrop is shown as a still image of its first frame, so the video is not decoded a second time.
 
-Nothing done to the mirror changes the battlemap itself. `map mirror grid` and `map mirror coords` only change what the mirror shows, the cell size always comes from the table, and resizing or closing the mirror leaves the table screen untouched.
+The display settings never change the battlemap itself. `map mirror grid` and `map mirror coords` only change what the mirror shows, the cell size always comes from the table, and resizing or closing the mirror leaves the table screen untouched. The only way the mirror changes the map is mouse input, described below, and that goes through the normal commands.
+
+### Mouse input
+
+Some commands can take their cells from the mouse instead of from the keyboard. Typing the command without its cells puts the mirror in a **mode**; a click on the mirror then selects one cell and a drag selects a rectangle of cells. The mirror turns the selection into the same command the game master would otherwise type, and runs it:
+
+```
+map mirror fow reveal          then drag over the room on the mirror
+[mirror] map fow reveal B2:E8  printed in the console, followed by the usual report
+```
+
+Because the result is an ordinary command, the same checks apply as when typing it, the table screen and the mirror update together, and the console shows every change the mouse made. Typed commands and mouse commands run one after the other, in the order they arrive; see [the core documentation](../../core/README.md#threading).
+
+| Command | Click or drag runs | The mode ends |
+|---|---|---|
+| `map mirror fow reveal` | `map fow reveal <cells>` | When it is left (see below) |
+| `map mirror fow hide` | `map fow hide <cells>` | When it is left |
+| `map mirror sprite add <file> as <name>` | `map sprite add <file> <cells> as <name>` | After one sprite, since a name can be used only once |
+| `map mirror sprite add <file>` | `map sprite add <file> <cells>` | When it is left; every click or drag adds a sprite (`sprite1`, `sprite2`, ...) |
+
+A mode command opens the mirror if it is not open yet. Everything that can be checked without the cells is checked straight away, before any clicking: `map mirror fow reveal` is refused while the fog is off, and `map mirror sprite add` reports a missing file or a sprite name that is invalid or already taken.
+
+**Selecting cells.** A drag selects a column when at least half of its width lies inside the dragged rectangle, and a row when at least half of its height does, so each edge of the rectangle snaps to the nearest grid line. The result is always a rectangle of cells, the same kind of range as `B2:E8`. While dragging, the mirror outlines the cells that will be selected and shows their range, so the result is visible before the mouse button is released. A drag that leaves the map stops at its edge, and a drag that covers less than half of every cell selects nothing.
+
+**Leaving a mode.** A mode ends with Esc, a right-click on the mirror, another mode command, closing the mirror, or when the mirror loses focus, for example by clicking in the console to type the next command. The console prints why a mode ended. While a mode is on, the mouse pointer over the map is a crosshair and the mirror's title names the mode, such as `battlemap_mirror — revealing fog (Esc to stop)`.
+
+**Focus.** Opening the mirror and starting a mode bring the mirror to the front with keyboard focus, so Esc works straight away. Afterwards, the console has to be clicked before typing the next command. If the operating system refuses to hand over the focus, the first click on the mirror gives it focus instead; losing focus only ends a mode after the mirror has had it.
 
 ## Command reference
 
@@ -258,6 +284,8 @@ Nothing done to the mirror changes the battlemap itself. `map mirror grid` and `
 | `map mirror remove` | Close the mirror (same as its close button) |
 | `map mirror grid on` / `off` | Show or hide the mirror's grid lines |
 | `map mirror coords on` / `off` | Show or hide the mirror's coordinate rulers |
+| `map mirror fow reveal` / `hide` | Reveal or hide fog by clicking or dragging on the mirror |
+| `map mirror sprite add <file> [as <name>]` | Place sprites by clicking or dragging on the mirror |
 
 ## How it is drawn
 
@@ -265,7 +293,7 @@ Everything is drawn on a single Tk canvas in layers, from bottom to top: backdro
 
 Only the backdrop is expensive to redraw: scaling a 4K image takes noticeable time and memory. Changes to the other layers never cause the backdrop to be redrawn, and a video backdrop reuses one image for every frame.
 
-The shared state (backdrop, cell scale, coordinate style, sprites, areas of effect and fog of war) lives in `BattleMapState`. What a particular window shows, such as whether the grid or labels are visible and where the labels go, belongs to the view. The table screen and the [mirror](#game-master-mirror) are two views of the same state, which keeps them consistent; the mirror's view derives its cell size from the table's view and reads the state without changing it. Both views share the decoded backdrop image, so the mirror does not hold a second full-resolution copy.
+The shared state (backdrop, cell scale, coordinate style, sprites, areas of effect and fog of war) lives in `BattleMapState`. What a particular window shows, such as whether the grid or labels are visible and where the labels go, belongs to the view. The table screen and the [mirror](#game-master-mirror) are two views of the same state, which keeps them consistent; the mirror's view derives its cell size from the table's view and reads the state without changing it. Mouse input on the mirror changes the state only by running ordinary commands. Both views share the decoded backdrop image, so the mirror does not hold a second full-resolution copy.
 
 ## Files
 
@@ -273,12 +301,13 @@ The shared state (backdrop, cell scale, coordinate style, sprites, areas of effe
 |---|---|
 | `__init__.py` | The feature: `map` commands, reports, grid calibration and tab completion |
 | `model/battlemap_state.py` | Shared state: backdrop, cell scale, coordinate style, sprites, areas of effect, fog of war |
-| `model/grid.py` | Calibration, cell geometry, coordinate parsing and labels, cell ranges, mirror scaling and rulers |
+| `model/grid.py` | Calibration, cell geometry, coordinate parsing and labels, cell ranges, mirror scaling, rulers and the cells a drag selects |
 | `model/aoe.py` | Area of effect command parsing and the cells each shape covers |
 | `sprite_images.py` | Reading, rotating and scaling sprite images and animation frames |
 | `video.py` | Streaming `.webm` decoder running on a background thread |
 | `views/battlemap_view.py` | The canvas and its layers |
 | `views/mirror.py` | The game master mirror: the scaled copy of the table view and its rulers |
+| `views/mirror_input.py` | Mouse input on the mirror: modes, the selection preview and the commands they produce |
 | `views/animation.py` | The shared animation clock, the video backdrop and sprite animations |
 | `styling.py` | Colours used by the view |
 
