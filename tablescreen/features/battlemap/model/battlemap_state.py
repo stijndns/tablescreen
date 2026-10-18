@@ -208,3 +208,11 @@ class BattleMapState:
 def _cells(area: CellArea) -> frozenset[tuple[int, int]]:
     return frozenset((row, col) for row in range(area.top, area.bottom + 1)
                      for col in range(area.left, area.right + 1))
+
+
+def sprite_at(sprites: tuple[Sprite, ...], row: int, col: int) -> Optional[Sprite]:
+    """The topmost sprite whose footprint covers the cell: the last one drawn
+    (sprites are drawn in add order). None if the cell is empty."""
+    return next((s for s in reversed(sprites)
+                 if s.area.top <= row <= s.area.bottom
+                 and s.area.left <= col <= s.area.right), None)

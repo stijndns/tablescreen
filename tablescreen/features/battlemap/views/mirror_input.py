@@ -1,46 +1,46 @@
 """
 mirror_input.py — Mouse input on the DM mirror.
 
-A mirror command (``map mirror fow reveal``) puts the mirror in a MODE; the
-mouse then supplies the cells: a click selects one cell, a drag a rectangle
-of cells (see grid.drag_area). The result is the same command text the DM
-would type (``map fow reveal B3:D7``), handed to the feature's submit
-callback, which queues it on the executor. Nothing here changes state.
+A mirror command (``map mirror fow reveal``) puts the mirror in a MODE with
+a tool (see mirror_tools.py); the tool turns clicks, drags and the wheel
+into the same command text the DM would type (``map fow reveal B3:D7``),
+handed to the feature's submit callback, which queues it on the executor.
+Nothing here changes state.
 
-A mode ends on Esc, a right-click, another mode, the mirror closing, or the
-mirror losing focus (only after it had focus, since the mode is started
-from the console). While one is on, the cursor is a crosshair and the title
-says which mode it is. Mainloop thread only.
+This controller owns what every mode shares: the event bindings, focus,
+the crosshair cursor and title, adding up wheel deltas, the preview drawing
+helpers (the canvas's overlay layer, above everything) and the exits. A mode
+ends on Esc or a right-click (unless the tool only drops something it holds),
+another mode, the mirror closing, or the mirror losing focus (only after it
+had focus, since the mode is started from the console). Mainloop thread only.
 """
 
 from __future__ import annotations
 
 import math
 import tkinter as tk
-from dataclasses import dataclass
 from typing import Callable, Optional
 
-from ..model.grid import CellArea, area_label, area_to_pixels, drag_area, pixels_to_cell
-from .mirror import MirrorView
+from PIL import ImageTk
 
-PREVIEW_TAG = "mirror_preview"
+from ....core.paths import IMAGES_DIR
+from ..model.grid import CellArea, area_label, area_to_pixels, drag_area, pixels_to_cell
+from ..sprite_images import ghost_image
+from .battlemap_view import OVERLAY_TAG
+from .mirror import MirrorView
+from .mirror_tools import MirrorTool, Pos
+
+PREVIEW_TAG = "mirror_preview"      # with OVERLAY_TAG, which the view keeps on top
 PREVIEW_COLOR = "#ffd000"
 PREVIEW_SHADOW = "black"
+GHOST_OPACITY = 0.4                 # sprite previews: see-through
 CLICK_SLOP_PX = 4       # a press and release closer than this is a click
 FOCUS_CHECK_MS = 50     # focus moves as FocusOut then FocusIn: look after both
-
-
-@dataclass(frozen=True)
-class MirrorMode:
-    """What the mouse does on the mirror until the mode ends."""
-    label: str                          # "revealing fog": title and messages
-    hint: str                           # printed when the mode starts
-    command: Callable[[CellArea], str]  # selected cells → command line
-    once: bool = False                  # ends after one use
+WHEEL_NOTCH = 120       # Windows' delta per mouse notch; touchpads send less
 
 
 class MirrorInput:
-    """Turns clicks and drags on a mirror into command lines."""
+    """Runs one tool at a time on a mirror and draws its previews."""
 
     def __init__(self, mirror: MirrorView, submit: Callable[[str], None]):
         self._mirror = mirror
@@ -48,30 +48,41 @@ class MirrorInput:
         self._canvas = mirror.view.canvas
         self._top = self._canvas.winfo_toplevel()
         self._title = self._top.title()
-        self.mode: Optional[MirrorMode] = None
-        self._press: Optional[tuple[float, float]] = None   # drag start
+        self.mode: Optional[MirrorTool] = None
+        self._press: Optional[Pos] = None       # where the button went down
         self._armed = False     # the mirror had focus since the mode started
+        self._wheel = 0         # delta not yet worth a whole notch
+        self._wheel_events = False              # <MouseWheel> seen (Tk 9 on X11)
+        self._images: list[ImageTk.PhotoImage] = []     # previews on screen
+        self._ghosts: dict[tuple, Optional[ImageTk.PhotoImage]] = {}
 
         canvas = self._canvas
+        canvas.bind("<Motion>", self._on_hover, add="+")
+        canvas.bind("<Leave>", self._on_leave, add="+")
         canvas.bind("<ButtonPress-1>", self._on_press, add="+")
-        canvas.bind("<B1-Motion>", self._on_motion, add="+")
+        canvas.bind("<B1-Motion>", self._on_drag, add="+")
         canvas.bind("<ButtonRelease-1>", self._on_release, add="+")
-        canvas.bind("<ButtonPress-3>", lambda e: self.stop("right-click"), add="+")
+        canvas.bind("<ButtonPress-3>", lambda e: self._cancel("right-click"), add="+")
+        canvas.bind("<MouseWheel>", self._on_wheel, add="+")
+        canvas.bind("<Button-4>", lambda e: self._on_button_wheel(WHEEL_NOTCH), add="+")
+        canvas.bind("<Button-5>", lambda e: self._on_button_wheel(-WHEEL_NOTCH), add="+")
         # On the toplevel: its bindtag is on every widget inside it.
-        self._top.bind("<Escape>", lambda e: self.stop("Esc"), add="+")
+        self._top.bind("<Escape>", lambda e: self._cancel("Esc"), add="+")
         self._top.bind("<FocusIn>", self._on_focus_in, add="+")
         self._top.bind("<FocusOut>", self._on_focus_out, add="+")
 
     # ── Modes ─────────────────────────────────────────────────────────────
 
-    def start(self, mode: MirrorMode) -> None:
+    def start(self, tool: MirrorTool) -> None:
         if self.mode is not None:
-            self.stop(f"now {mode.label}")
-        self.mode = mode
+            self.stop(f"now {tool.label}")
+        tool.ctx = self
+        self.mode = tool
+        self._press, self._wheel = None, 0
         self._armed = self._has_focus()
         self._canvas.configure(cursor="crosshair")
-        self._top.title(f"{self._title} — {mode.label} (Esc to stop)")
-        print(f"[+] Mirror: {mode.hint} Esc, a right-click or leaving the mirror "
+        self._top.title(f"{self._title} — {tool.label} (Esc to stop)")
+        print(f"[+] Mirror: {tool.hint} Esc, a right-click or leaving the mirror "
               f"stops.")
         self.focus()
 
@@ -79,10 +90,22 @@ class MirrorInput:
         if self.mode is None:
             return
         label, self.mode = self.mode.label, None
-        self._cancel_drag()
+        self._press = None
+        self.clear()
+        self._ghosts.clear()
         self._canvas.configure(cursor="")
         self._top.title(self._title)
         print(f"[i] Mirror: stopped {label} ({reason}).")
+
+    def submit(self, line: str) -> None:
+        """For tools: queue a command; a one-off mode then ends."""
+        self._submit(line)
+        if self.mode is not None and self.mode.once:
+            self.stop("done")
+
+    def _cancel(self, reason: str) -> None:
+        if self.mode is not None and not self.mode.cancel():
+            self.stop(reason)
 
     # ── Focus ─────────────────────────────────────────────────────────────
 
@@ -124,66 +147,143 @@ class MirrorInput:
 
     # ── Mouse ─────────────────────────────────────────────────────────────
 
+    def _on_hover(self, event) -> None:
+        if self.mode is not None and self._press is None:
+            self.mode.hover(self._clamp(event.x, event.y))
+
+    def _on_leave(self, event) -> None:
+        if self.mode is not None and self._press is None:
+            self.mode.leave()
+
     def _on_press(self, event) -> None:
         if self.mode is None:
             return
         self._armed = True      # in use, whether or not Windows gave focus
         self._press = self._clamp(event.x, event.y)
-        self._draw_preview(self._press)
+        self.mode.press(self._press)
 
-    def _on_motion(self, event) -> None:
-        if self._press is not None:
-            self._draw_preview(self._clamp(event.x, event.y))
+    def _on_drag(self, event) -> None:
+        if self.mode is not None and self._press is not None:
+            self.mode.drag(self._clamp(event.x, event.y))
 
     def _on_release(self, event) -> None:
-        if self._press is None or self.mode is None:
+        if self.mode is None or self._press is None:
             return
-        area = self._selection(self._press, self._clamp(event.x, event.y))
-        self._cancel_drag()
-        if area is None:
-            print("[i] Mirror: that rectangle covers no cell; nothing changed.")
-            return
-        mode = self.mode
-        self._submit(mode.command(area))
-        if mode.once:
-            self.stop("done")
+        start, self._press = self._press, None
+        end = self._clamp(event.x, event.y)
+        self.mode.release(end, math.dist(start, end) < CLICK_SLOP_PX)
 
-    def _clamp(self, x: float, y: float) -> tuple[float, float]:
-        """Keep a drag that leaves the map on its edge."""
+    def _on_wheel(self, event) -> None:
+        self._wheel_events = True
+        self._add_wheel(event.delta)
+
+    def _on_button_wheel(self, delta: int) -> None:
+        if not self._wheel_events:      # Tk 9 sends <MouseWheel> instead
+            self._add_wheel(delta)
+
+    def _add_wheel(self, delta: int) -> None:
+        """Hand the tool whole notches; a touchpad's small deltas add up."""
+        if self.mode is None:
+            return
+        self._wheel += delta
+        steps = int(self._wheel / WHEEL_NOTCH)      # towards zero
+        if steps:
+            self._wheel -= steps * WHEEL_NOTCH
+            self.mode.wheel(steps)
+
+    def _clamp(self, x: float, y: float) -> Pos:
+        """Keep a pointer that leaves the map on its edge."""
         width, height = self._mirror.map_size()
         return min(max(x, 0), width - 1), min(max(y, 0), height - 1)
 
-    def _selection(self, start: tuple[float, float],
-                   end: tuple[float, float]) -> Optional[CellArea]:
-        cell = self._mirror.view.current_cell_px()
+    # ── For tools: the map ────────────────────────────────────────────────
+
+    @property
+    def cell(self) -> Optional[float]:
+        return self._mirror.view.current_cell_px()
+
+    @property
+    def style(self) -> str:
+        return self._mirror.view.coords_style
+
+    @property
+    def sprites(self) -> tuple:
+        return self._mirror.view.sprites
+
+    @property
+    def aoes(self) -> tuple:
+        return self._mirror.view.aoes
+
+    def map_size(self) -> tuple[int, int]:
+        return self._mirror.map_size()
+
+    def cell_at(self, pos: Pos) -> Optional[tuple[int, int]]:
+        """(row, col) under a map pixel, None while the cell size is unknown."""
+        cell = self.cell
+        return pixels_to_cell(*pos, cell) if cell else None
+
+    def selection(self, start: Pos, end: Pos) -> Optional[CellArea]:
+        """A click's cell or a drag's cells (see grid.drag_area)."""
+        cell = self.cell
         if not cell:
             return None
         if math.dist(start, end) < CLICK_SLOP_PX:
             row, col = pixels_to_cell(*start, cell)
             return CellArea(row, col, row, col)
-        return drag_area(start, end, cell, self._mirror.map_size())
+        return drag_area(start, end, cell, self.map_size())
 
-    # ── Preview (mirror only, never state) ────────────────────────────────
+    # ── For tools: previews (mirror only, never state) ────────────────────
 
-    def _draw_preview(self, end: tuple[float, float]) -> None:
-        canvas = self._canvas
-        canvas.delete(PREVIEW_TAG)
-        (x0, y0), (x1, y1) = self._press, end
-        canvas.create_rectangle(x0, y0, x1, y1, outline="white", dash=(4, 4),
-                                tags=PREVIEW_TAG)
-        area = self._selection(self._press, end)
-        cell = self._mirror.view.current_cell_px()
-        if area is None or not cell:
-            return
-        width, height = self._mirror.map_size()
-        x, y, w, h = area_to_pixels(area, cell)
-        canvas.create_rectangle(x, y, min(x + w, width), min(y + h, height),
-                                outline=PREVIEW_COLOR, width=3, tags=PREVIEW_TAG)
-        text = area_label(area, self._mirror.view.coords_style)
-        for dx, color in ((1, PREVIEW_SHADOW), (0, PREVIEW_COLOR)):
-            canvas.create_text(x + 5 + dx, y + 4 + dx, text=text, anchor="nw",
-                               font=self._mirror.font, fill=color, tags=PREVIEW_TAG)
-
-    def _cancel_drag(self) -> None:
-        self._press = None
+    def clear(self) -> None:
         self._canvas.delete(PREVIEW_TAG)
+        self._images.clear()
+
+    def _tags(self) -> tuple[str, str]:
+        return PREVIEW_TAG, OVERLAY_TAG
+
+    def dashed_rect(self, start: Pos, end: Pos) -> None:
+        self._canvas.create_rectangle(*start, *end, outline="white", dash=(4, 4),
+                                      tags=self._tags())
+
+    def outline(self, area: CellArea, color: str = PREVIEW_COLOR, width: int = 3) -> None:
+        cell = self.cell
+        if not cell:
+            return
+        map_w, map_h = self.map_size()
+        x, y, w, h = area_to_pixels(area, cell)
+        self._canvas.create_rectangle(x, y, min(x + w, map_w), min(y + h, map_h),
+                                      outline=color, width=width, tags=self._tags())
+
+    def text(self, x: float, y: float, text: str, color: str = PREVIEW_COLOR) -> None:
+        """Readable on any map: the ruler font with a shadow."""
+        for dx, fill in ((1, PREVIEW_SHADOW), (0, color)):
+            self._canvas.create_text(x + dx, y + dx, text=text, anchor="nw",
+                                     font=self._mirror.font, fill=fill,
+                                     tags=self._tags())
+
+    def area_label(self, area: CellArea, color: str = PREVIEW_COLOR) -> None:
+        """The range (``B3:D7``) in the area's top-left corner."""
+        cell = self.cell
+        if cell:
+            x, y, _, _ = area_to_pixels(area, cell)
+            self.text(x + 5, y + 4, area_label(area, self.style), color)
+
+    def ghost(self, file: str, rotation: float, area: CellArea) -> None:
+        """A see-through sprite fitted in the area, as the battlemap would draw
+        it. Images are cached per size until the mode ends."""
+        cell = self.cell
+        if not cell:
+            return
+        x, y, w, h = area_to_pixels(area, cell)
+        key = (file, rotation % 360, round(w), round(h))
+        if key not in self._ghosts:
+            try:
+                image = ghost_image(IMAGES_DIR / file, rotation, (w, h), GHOST_OPACITY)
+                self._ghosts[key] = ImageTk.PhotoImage(image)
+            except Exception:
+                self._ghosts[key] = None    # the command reports the problem
+        photo = self._ghosts[key]
+        if photo is not None:
+            self._images.append(photo)
+            self._canvas.create_image(x + w / 2, y + h / 2, image=photo,
+                                      anchor="center", tags=self._tags())

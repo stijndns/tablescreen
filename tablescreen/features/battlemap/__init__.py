@@ -28,7 +28,8 @@ from .sprite_images import FRAME_MEMORY_WARN_BYTES
 from .video import VIDEO_EXTENSIONS
 from .views.battlemap_view import BackdropCache, BattleMapView
 from .views.mirror import MirrorView
-from .views.mirror_input import MirrorInput, MirrorMode
+from .views.mirror_input import MirrorInput
+from .views.mirror_tools import AreaTool
 
 CURRENT_OS = platform.system()
 
@@ -670,8 +671,8 @@ class BattleMapFeature(FeatureBase):
             label, hint = (f"placing {file}",
                            f"click a cell or drag over a range to place {file}; "
                            f"each one adds a sprite.")
-        self.mirror_input.start(MirrorMode(
-            label=label, hint=hint, once=name is not None,
+        self.mirror_input.start(AreaTool(
+            label=label, hint=hint, once=name is not None, ghost=file,
             command=lambda area: sprite_add_command(
                 file, area, self.mirror.view.coords_style, name)))
 
@@ -679,7 +680,7 @@ class BattleMapFeature(FeatureBase):
         """Clicks and drags on the mirror reveal or hide fog, until the mode
         ends. Opens the mirror if needed."""
         self._mirror_show(announce_open=False)
-        self.mirror_input.start(MirrorMode(
+        self.mirror_input.start(AreaTool(
             label="revealing fog" if action == "reveal" else "hiding fog",
             hint=f"click a cell or drag over cells to {action} them.",
             command=lambda area: (f"map fow {action} "

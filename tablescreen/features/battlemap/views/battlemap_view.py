@@ -40,6 +40,7 @@ FOG_COLOR = "black"     # opaque: Tk canvases have no transparency
 MIRROR_FOG_ALPHA = 150  # of 255
 GRID_TAG = "grid"
 COORDS_TAG = "coords"
+OVERLAY_TAG = "overlay"     # drawn by others on top of everything (mirror previews)
 
 LABEL_SHADOW_COLOR = "black"    # no canvas transparency, so labels get a shadow
 
@@ -236,13 +237,14 @@ class BattleMapView(tk.Frame):
         self._draw_coords(width, height)
 
     def _restack(self) -> None:
-        """Enforce backdrop → sprites → fog → aoe → grid → coords; new items land on top."""
+        """Enforce backdrop → sprites → fog → aoe → grid → coords → overlay; new items land on top."""
         self.canvas.tag_lower(BACKDROP_TAG)
         self.canvas.tag_raise(SPRITES_TAG)
         self.canvas.tag_raise(FOG_TAG)
         self.canvas.tag_raise(AOE_TAG)
         self.canvas.tag_raise(GRID_TAG)
         self.canvas.tag_raise(COORDS_TAG)
+        self.canvas.tag_raise(OVERLAY_TAG)
 
     def _draw_backdrop(self, width: int, height: int) -> None:
         key = (self._filename, width, height)
@@ -442,6 +444,16 @@ class BattleMapView(tk.Frame):
     @property
     def coords_style(self) -> str:
         return self._coords_style
+
+    @property
+    def sprites(self) -> tuple:
+        """As of the last render (the state may be newer)."""
+        return self._sprites
+
+    @property
+    def aoes(self) -> tuple:
+        """As of the last render (the state may be newer)."""
+        return self._aoes
 
     @property
     def label_color(self) -> str:

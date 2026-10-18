@@ -70,3 +70,15 @@ def scaled_frames(path: Path, size: tuple[int, int],
                 # Pillow rotates counter-clockwise; multiples of 90 are exact.
                 frame = frame.rotate(-rotation, resample=Image.BICUBIC, expand=True)
             yield frame.resize(size, Image.LANCZOS)
+
+
+def ghost_image(path: Path, rotation: float, box: tuple[float, float],
+                opacity: float) -> Image.Image:
+    """A see-through preview of a sprite: its first frame, rotated and fitted
+    into ``box`` exactly as the battlemap draws it, at ``opacity`` (0-1)."""
+    source = read_source(path)
+    size = fit_size(rotated_size(source.size, rotation), box)
+    frame = next(scaled_frames(path, size, rotation))
+    alpha = frame.getchannel("A").point(lambda a: round(a * opacity))
+    frame.putalpha(alpha)
+    return frame
