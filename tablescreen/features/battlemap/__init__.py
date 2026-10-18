@@ -29,9 +29,9 @@ from .video import VIDEO_EXTENSIONS
 from .views.battlemap_view import BackdropCache, BattleMapView
 from .views.mirror import MirrorView
 from .views.mirror_input import MirrorInput
-from .views.mirror_tools import (AoePlaceTool, AreaTool, SpriteMoveTool,
-                                 SpriteRemoveTool, SpriteResizeTool,
-                                 SpriteRotateTool)
+from .views.mirror_tools import (AoeMoveTool, AoePlaceTool, AoeRemoveTool,
+                                 AreaTool, SpriteMoveTool, SpriteRemoveTool,
+                                 SpriteResizeTool, SpriteRotateTool)
 
 CURRENT_OS = platform.system()
 
@@ -126,10 +126,17 @@ DM mirror (a scaled copy of the battlemap in its own window; one at most):
                                       footprint
     map mirror aoe sphere <radius> [as <name>]
     map mirror aoe cube <size> [as <name>]
+    map mirror aoe cone <length> [as <name>]
                                     — a preview follows the mouse, a click
                                       places it; a sphere takes a grid corner
-                                      when the mouse is near one; with a name
-                                      one area, without one as many as clicked
+                                      when the mouse is near one; the wheel
+                                      aims a cone (down = clockwise); with a
+                                      name one area, without one as many as
+                                      clicked
+    map mirror aoe remove           — click an area to remove it (the topmost
+                                      one in that cell)
+    map mirror aoe move             — click an area, then click where it goes
+                                      (or drag it there)
 """
 
 
@@ -393,8 +400,13 @@ class BattleMapFeature(FeatureBase):
         words = [w.lower() for w in rest] or ["status"]
         if words[:2] == ["sprite", "add"]:
             self._cmd_mirror_sprite_add(rest[2:])      # file names keep their case
-        elif words[:2] in (["aoe", "sphere"], ["aoe", "cube"]):
+        elif words[:2] in (["aoe", "sphere"], ["aoe", "cube"], ["aoe", "cone"]):
             self._cmd_mirror_aoe_place(words[1], rest[2:])
+        elif words in (["aoe", "move"], ["aoe", "remove"]):
+            if not self.state.aoes:
+                print(f"[i] There are no areas of effect to {words[1]}.")
+                return
+            self.services.send(self.name, "mirror", ("aoe_tool", words[1]))
         elif words[0] == "sprite" and words[1:2] in (["remove"], ["move"], ["rotate"],
                                                       ["resize"]):
             self._cmd_mirror_sprite_tool(words[1], words[2:])
@@ -411,20 +423,27 @@ class BattleMapFeature(FeatureBase):
                   "| fow reveal|hide | sprite add <file> [as <name>] "
                   "| sprite remove | sprite move | sprite rotate [step] "
                   "| sprite resize | aoe sphere <radius> [as <name>] "
-                  "| aoe cube <size> [as <name>]]")
+                  "| aoe cube <size> [as <name>] | aoe cone <length> [as <name>] "
+                  "| aoe move | aoe remove]")
 
     def _cmd_mirror_aoe_place(self, shape: str, args: list[str]) -> None:
-        """Check the size and name as `map aoe` would, before any clicking."""
-        placeholder = "A1" if shape == "sphere" else "A1c"   # the mouse picks it
+        """Check the size and name as `map aoe` would, before any clicking.
+        The mouse picks the origin (and the wheel a cone's direction), so
+        placeholders stand in for them."""
+        size_word = {"sphere": "radius", "cube": "size", "cone": "length"}[shape]
+        usage = f"Usage: map mirror aoe {shape} <{size_word}> [as <name>]"
+        named = len(args) >= 2 and args[-2].lower() == "as"
+        size_args, tail = (args[:-2], args[-2:]) if named else (args, [])
+        if len(size_args) != 1:
+            print(usage)
+            return
+        placeholder = {"sphere": ["A1"], "cube": ["A1c"], "cone": ["A1"]}[shape]
+        direction = ["n"] if shape == "cone" else []
         try:
-            fields, name = parse_aoe(shape, [placeholder, *args])
+            fields, name = parse_aoe(shape, [*placeholder, *size_args, *direction, *tail])
         except ValueError as exc:
             message = str(exc)
-            if message.startswith("Usage"):
-                print(f"Usage: map mirror aoe {shape} "
-                      f"<{'radius' if shape == 'sphere' else 'size'}> [as <name>]")
-            else:
-                print(f"[!] {message}")
+            print(usage if message.startswith("Usage") else f"[!] {message}")
             return
         if name is not None and not SPRITE_NAME.fullmatch(name):
             print(f"[!] Invalid AoE name '{name}': use letters, digits, '_' and '-' only.")
@@ -667,6 +686,10 @@ class BattleMapFeature(FeatureBase):
             elif action == "aoe_place":
                 self._mirror_show(announce_open=False)
                 self.mirror_input.start(AoePlaceTool(*args))
+            elif action == "aoe_tool":
+                self._mirror_show(announce_open=False)
+                self.mirror_input.start(AoeMoveTool() if args[0] == "move"
+                                        else AoeRemoveTool())
             elif action == "sprite_tool":
                 verb, step = args
                 self._mirror_show(announce_open=False)
@@ -918,8 +941,9 @@ class BattleMapFeature(FeatureBase):
             elif len(parts) == 3 and parts[2].lower() == "sprite":
                 options = ("add", "remove", "move", "rotate", "resize")
             elif len(parts) == 3 and parts[2].lower() == "aoe":
-                options = ("sphere", "cube")
-            elif len(parts) == 5 and parts[2].lower() == "aoe":
+                options = ("sphere", "cube", "cone", "move", "remove")
+            elif (len(parts) == 5 and parts[2].lower() == "aoe"
+                  and parts[3].lower() in ("sphere", "cube", "cone")):
                 options = ("as",)
             elif len(parts) == 4 and parts[2:4] == ["sprite", "add"]:
                 clean = line.split()[-1] if not line.endswith(" ") else ""

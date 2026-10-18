@@ -10,9 +10,10 @@ thread only.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import TYPE_CHECKING, Callable, Optional
 
-from ..model.aoe import AoE
+from ..model.aoe import AoE, aoe_at
 from ..model.battlemap_state import Sprite, sprite_at
 from ..model.grid import CellArea, area_label, cell_label, pick_origin
 
@@ -116,6 +117,7 @@ class AreaTool(MirrorTool):
 
 
 REMOVE_COLOR = "#ff4040"
+PICK_AOE_COLOR = "white"    # AoEs come in yellow too: the usual highlight would vanish
 
 
 class SpriteRemoveTool(MirrorTool):
@@ -416,10 +418,37 @@ def origin_text(row: int, col: int, corner: bool, style: str) -> str:
     return cell_label(row, col, style) + ("c" if corner else "")
 
 
+# Which origins each shape takes (see grid.pick_origin).
+ALLOW = {"sphere": "both", "cube": "corner", "cone": "cell"}
+
+# The 12 cone variants, clockwise from north; a wheel notch down steps on.
+CONE_VARIANTS = (("n", False), ("n", True), ("ne", False), ("e", False),
+                 ("e", True), ("se", False), ("s", False), ("s", True),
+                 ("sw", False), ("w", False), ("w", True), ("nw", False))
+
+
+def aoe_args(aoe: AoE, style: str) -> str:
+    """What follows `map aoe`: ``sphere E8c 20`` or ``cone E8 15 e mirror``."""
+    text = f"{aoe.shape} {origin_text(aoe.row, aoe.col, aoe.corner, style)} {aoe.size_ft}"
+    if aoe.shape == "cone":
+        text += f" {aoe.direction}" + (" mirror" if aoe.mirror else "")
+    return text
+
+
+def aoe_caption(aoe: AoE, style: str) -> str:
+    """``20 ft sphere H15c`` / ``15 ft cone E8 e, mirrored``: preview labels."""
+    text = (f"{aoe.size_ft} ft {aoe.shape} "
+            f"{origin_text(aoe.row, aoe.col, aoe.corner, style)}")
+    if aoe.shape == "cone":
+        text += f" {aoe.direction}" + (", mirrored" if aoe.mirror else "")
+    return text
+
+
 class AoePlaceTool(MirrorTool):
     """A preview of the area follows the pointer; a click places it. Spheres
     take a grid corner when the pointer is near one, else the cell centre;
-    cubes always the nearest corner (their top-left)."""
+    cubes always the nearest corner (their top-left); cones the hovered cell
+    (the caster), aimed with the wheel through all 12 variants."""
 
     def __init__(self, shape: str, size_ft: int, name: Optional[str] = None):
         super().__init__()
@@ -427,35 +456,49 @@ class AoePlaceTool(MirrorTool):
         self.once = name is not None
         what = name or f"a {size_ft} ft {shape}"
         self.label = f"placing {what}"
-        self.hint = (f"move the preview of {what} and click to place it"
-                     + ("; near a grid corner the corner is the centre."
-                        if shape == "sphere" else
-                        "; it starts at the nearest grid corner (its top-left).")
+        how = {"sphere": "; near a grid corner the corner is the centre.",
+               "cube": "; it starts at the nearest grid corner (its top-left).",
+               "cone": " from the caster's cell; turn the wheel to aim it "
+                       "(down = clockwise)."}[shape]
+        self.hint = (f"move the preview of {what} and click to place it{how}"
                      + ("" if self.once else " Each click adds one."))
-        self._shown: Optional[tuple[int, int, bool]] = None
+        self._variant = 0               # cones: index into CONE_VARIANTS
+        self._origin_now: Optional[tuple[int, int, bool]] = None
+        self._shown: Optional[tuple] = None
 
     def _origin(self, pos: Pos) -> Optional[tuple[int, int, bool]]:
         cell = self.ctx.cell
-        if not cell:
-            return None
-        return pick_origin(*pos, cell, "both" if self.shape == "sphere" else "corner")
+        return pick_origin(*pos, cell, ALLOW[self.shape]) if cell else None
+
+    def _aoe(self, origin: tuple[int, int, bool]) -> AoE:
+        direction, mirror = (CONE_VARIANTS[self._variant] if self.shape == "cone"
+                             else (None, False))
+        return AoE("preview", self.shape, *origin, self.size_ft, direction, mirror)
 
     def hover(self, pos: Pos) -> None:
-        origin = self._origin(pos)
-        if origin is None or origin == self._shown:
-            return
-        self._shown = origin
-        ctx = self.ctx
-        ctx.clear()
-        ctx.aoe_preview(AoE("preview", self.shape, *origin, self.size_ft),
-                        label=f"{self.size_ft} ft {self.shape} "
-                              f"{origin_text(*origin, ctx.style)}")
+        self._origin_now = self._origin(pos)
+        self._draw()
 
     def drag(self, pos: Pos) -> None:
         self.hover(pos)                 # the button held down: still follows
 
+    def wheel(self, steps: int) -> None:
+        if self.shape == "cone":
+            self._variant = (self._variant - steps) % len(CONE_VARIANTS)
+            self._draw()
+
+    def _draw(self) -> None:
+        origin = self._origin_now
+        key = (origin, self._variant)
+        if origin is None or key == self._shown:
+            return
+        self._shown = key
+        aoe = self._aoe(origin)
+        self.ctx.clear()
+        self.ctx.aoe_preview(aoe, label=aoe_caption(aoe, self.ctx.style))
+
     def leave(self) -> None:
-        self._shown = None
+        self._shown = self._origin_now = None
         super().leave()
 
     def release(self, pos: Pos, click: bool) -> None:
@@ -463,6 +506,155 @@ class AoePlaceTool(MirrorTool):
         if origin is None:
             print("[i] Mirror: the cell size isn't known yet; nothing changed.")
             return
-        line = (f"map aoe {self.shape} {origin_text(*origin, self.ctx.style)} "
-                f"{self.size_ft}")
+        line = f"map aoe {aoe_args(self._aoe(origin), self.ctx.style)}"
         self.ctx.submit(f"{line} as {self.name}" if self.name else line)
+
+
+class AoePickTool(MirrorTool):
+    """Base for tools that first pick an area of effect (the topmost one
+    covering a cell). Esc puts a picked area back."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._held: Optional[AoE] = None
+        self._shown: Optional[tuple] = None
+
+    def _aoe_under(self, pos: Pos) -> tuple[Optional[tuple[int, int]], Optional[AoE]]:
+        cell = self.ctx.cell_at(pos)
+        return cell, (aoe_at(self.ctx.aoes, *cell) if cell else None)
+
+    def _show_pickable(self, pos: Pos, color: str = PICK_AOE_COLOR) -> None:
+        """Outline the area a click would pick, with its name."""
+        cell, aoe = self._aoe_under(pos)
+        key = ("pick", aoe.name if aoe else None, cell if aoe is None else None)
+        if key == self._shown:
+            return
+        self._shown = key
+        self.ctx.clear()
+        if aoe is not None:
+            self.ctx.aoe_preview(aoe, color=color, label=aoe.name, fill=False)
+
+    def _no_aoe(self, cell: Optional[tuple[int, int]]) -> None:
+        if cell:
+            print(f"[i] Mirror: no area of effect in "
+                  f"{cell_label(*cell, self.ctx.style)}.")
+
+    def leave(self) -> None:
+        if self._held is None:
+            self._shown = None
+            super().leave()
+
+    def cancel(self) -> bool:
+        if self._held is None:
+            return False
+        name = self._held.name
+        self._drop()
+        print(f"[i] Mirror: put {name} back.")
+        return True
+
+    def _drop(self) -> None:
+        self._held, self._shown = None, None
+        self.ctx.clear()
+
+
+class AoeRemoveTool(AoePickTool):
+    """Click an area of effect to remove it (the topmost covering that cell)."""
+
+    label = "removing areas of effect"
+    hint = "click an area of effect to remove it (the topmost one in that cell)."
+
+    def hover(self, pos: Pos) -> None:
+        self._show_pickable(pos, color=REMOVE_COLOR)
+
+    def release(self, pos: Pos, click: bool) -> None:
+        cell, aoe = self._aoe_under(pos)
+        self._shown = None              # redraw on the next move: it's gone
+        self.ctx.clear()
+        if aoe is None:
+            self._no_aoe(cell)
+            return
+        self.ctx.submit(f"map aoe remove {aoe.name}")
+
+
+class AoeMoveTool(AoePickTool):
+    """Pick an area of effect and put it somewhere else: click it and click
+    where it goes, or drag it there. It keeps its shape, size, direction and
+    colour; the new origin snaps as its shape requires, and the area hangs
+    from the pointer by the point it was picked at. Esc puts it back."""
+
+    label = "moving areas of effect"
+    hint = "click an area of effect, then click where it goes (or drag it there)."
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._grab = (0.0, 0.0)         # pointer − origin, in pixels
+        self._carrying = False
+
+    def hover(self, pos: Pos) -> None:
+        if self._held is not None:
+            self._show_target(pos)
+        else:
+            self._show_pickable(pos)
+
+    def press(self, pos: Pos) -> None:
+        if self._held is not None:
+            return                      # carrying: it lands on release
+        _, aoe = self._aoe_under(pos)
+        if aoe is None:
+            return
+        self._held = aoe
+        ox, oy = self._origin_px(aoe)
+        self._grab = (pos[0] - ox, pos[1] - oy)
+        self._show_target(pos)
+
+    def drag(self, pos: Pos) -> None:
+        if self._held is not None:
+            self._show_target(pos)
+
+    def release(self, pos: Pos, click: bool) -> None:
+        if self._held is None:
+            self._no_aoe(self.ctx.cell_at(pos))
+            return
+        if click and not self._carrying:
+            self._carrying = True       # picked up: click again to put it down
+            return
+        aoe, target = self._held, self._target(pos)
+        self._drop()
+        if target is None or (target.row, target.col, target.corner) == (
+                aoe.row, aoe.col, aoe.corner):
+            print(f"[i] Mirror: {aoe.name} stays where it is.")
+            return
+        self.ctx.submit(f"map aoe move {aoe.name} "
+                        f"{origin_text(target.row, target.col, target.corner, self.ctx.style)}")
+
+    def _drop(self) -> None:
+        self._carrying = False
+        super()._drop()
+
+    def _origin_px(self, aoe: AoE) -> Pos:
+        cell = self.ctx.cell
+        x, y = (aoe.col - 1) * cell, (aoe.row - 1) * cell
+        return (x, y) if aoe.corner else (x + cell / 2, y + cell / 2)
+
+    def _target(self, pos: Pos) -> Optional[AoE]:
+        cell = self.ctx.cell
+        if not cell:
+            return None
+        width, height = self.ctx.map_size()
+        x = min(max(pos[0] - self._grab[0], 0), width - 1)
+        y = min(max(pos[1] - self._grab[1], 0), height - 1)
+        row, col, corner = pick_origin(x, y, cell, ALLOW[self._held.shape])
+        return replace(self._held, row=row, col=col, corner=corner)
+
+    def _show_target(self, pos: Pos) -> None:
+        target = self._target(pos)
+        if target is None:
+            return
+        key = ("target", target.row, target.col, target.corner)
+        if key == self._shown:
+            return
+        self._shown = key
+        self.ctx.clear()
+        self.ctx.aoe_preview(target, color=self._held.color,
+                             label=f"{target.name} → "
+                                   f"{origin_text(target.row, target.col, target.corner, self.ctx.style)}")

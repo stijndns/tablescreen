@@ -293,17 +293,18 @@ class MirrorInput:
         self._canvas.create_image(x, y, image=photo, anchor="nw", tags=self._tags())
 
     def aoe_preview(self, aoe: AoE, color: str = PREVIEW_COLOR,
-                    label: str = "") -> None:
+                    label: str = "", fill: bool = True) -> None:
         """An area of effect as it would be drawn: its cells filled
-        see-through, the outline around them and a dot on the origin, with
-        ``label`` beside the dot."""
+        see-through (unless ``fill`` is off, for an outline-only highlight),
+        the outline around them and a dot on the origin, with ``label`` beside
+        the dot."""
         cell = self.cell
         if not cell:
             return
         map_w, map_h = self.map_size()
         cells = {(r, c) for r, c in aoe_cells(aoe)
                  if (c - 1) * cell < map_w and (r - 1) * cell < map_h}
-        if cells:
+        if cells and fill:
             image, x0, y0 = cells_overlay(cells, cell, color, AOE_FILL_ALPHA)
             photo = ImageTk.PhotoImage(image)
             self._images.append(photo)
