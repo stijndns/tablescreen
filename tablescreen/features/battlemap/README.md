@@ -223,7 +223,7 @@ The display settings never change the battlemap itself. `map mirror grid` and `m
 
 ### Mouse input
 
-Some commands can take their cells from the mouse instead of from the keyboard. Typing the command without its cells puts the mirror in a **mode**; a click on the mirror then selects one cell and a drag selects a rectangle of cells. The mirror turns the selection into the same command the game master would otherwise type, and runs it:
+Every `map` command that takes a cell, a range, a sprite or an area of effect has a mirror version that takes it from the mouse instead. Typing the command without that part puts the mirror in a **mode**; clicks, drags and the mouse wheel on the mirror then supply it. The mirror turns the result into the same command the game master would otherwise type, and runs it:
 
 ```
 map mirror fow reveal          then drag over the room on the mirror
@@ -232,18 +232,42 @@ map mirror fow reveal          then drag over the room on the mirror
 
 Because the result is an ordinary command, the same checks apply as when typing it, the table screen and the mirror update together, and the console shows every change the mouse made. Typed commands and mouse commands run one after the other, in the order they arrive; see [the core documentation](../../core/README.md#threading).
 
-| Command | Click or drag runs | The mode ends |
+| Command | With the mouse | Runs |
 |---|---|---|
-| `map mirror fow reveal` | `map fow reveal <cells>` | When it is left (see below) |
-| `map mirror fow hide` | `map fow hide <cells>` | When it is left |
-| `map mirror sprite add <file> as <name>` | `map sprite add <file> <cells> as <name>` | After one sprite, since a name can be used only once |
-| `map mirror sprite add <file>` | `map sprite add <file> <cells>` | When it is left; every click or drag adds a sprite (`sprite1`, `sprite2`, ...) |
+| `map mirror fow reveal` / `hide` | Click a cell or drag over cells | `map fow reveal` / `hide <cells>` |
+| `map mirror sprite add <file> [as <name>]` | Click a cell or drag over a range | `map sprite add <file> <cells> [as <name>]` |
+| `map mirror sprite remove` | Click a sprite | `map sprite remove <name>` |
+| `map mirror sprite move` | Click a sprite, then click where it goes; or drag it there | `map sprite move <name> <cell>` |
+| `map mirror sprite rotate [step]` | Click a sprite, turn the wheel, click | `map sprite rotate <name> <degrees>` |
+| `map mirror sprite resize` | Click a sprite, then drag its new footprint | `map sprite resize <name> <range>` |
+| `map mirror aoe sphere <radius> [as <name>]` | Move the preview, click | `map aoe sphere <origin> <radius> [as <name>]` |
+| `map mirror aoe cube <size> [as <name>]` | Move the preview, click | `map aoe cube <corner> <size> [as <name>]` |
+| `map mirror aoe cone <length> [as <name>]` | Move the preview, turn the wheel to aim it, click | `map aoe cone <cell> <length> <direction> [mirror] [as <name>]` |
+| `map mirror aoe remove` | Click an area of effect | `map aoe remove <name>` |
+| `map mirror aoe move` | Click an area, then click where it goes; or drag it there | `map aoe move <name> <origin>` |
 
-A mode command opens the mirror if it is not open yet. Everything that can be checked without the cells is checked straight away, before any clicking: `map mirror fow reveal` is refused while the fog is off, and `map mirror sprite add` reports a missing file or a sprite name that is invalid or already taken.
+A mode stays on until it is left, so several cells, sprites or areas can be handled in a row. The exception is a command with `as <name>`: a name can be used only once, so that mode ends after one sprite or area. Without a name, every click adds another one (`sprite1`, `sprite2`, ..., `aoe1`, ...).
 
-**Selecting cells.** The cell where the mouse button is pressed always counts, wherever in it the drag starts. From there, a drag adds each further column of which at least half the width lies inside the dragged rectangle, and each further row of which at least half the height does, so the far edge snaps to the nearest grid line. The result is always a rectangle of cells, the same kind of range as `B2:E8`. While dragging, the mirror outlines the cells that will be selected and shows their range, so the result is visible before the mouse button is released. A drag that leaves the map stops at its edge, and a short drag inside one cell selects just that cell.
+A mode command opens the mirror if it is not open yet. Everything that can be checked before the mouse is used is checked straight away: `map mirror fow reveal` is refused while the fog is off; sprite and area commands report a missing file, a size that is not a multiple of 5, an invalid rotation step, or a name that is invalid or already taken; and the commands that pick a sprite or an area are refused when there is none.
 
-**Leaving a mode.** A mode ends with Esc, a right-click on the mirror, another mode command, closing the mirror, or when the mirror loses focus, for example by clicking in the console to type the next command. The console prints why a mode ended. While a mode is on, the mouse pointer over the map is a crosshair and the mirror's title names the mode, such as `battlemap_mirror — revealing fog (Esc to stop)`.
+**Previews.** The mirror shows what a click will do before it happens; previews are drawn on the mirror only, never on the table screen.
+
+- Cells: the cell under the pointer is outlined, and while dragging the mirror outlines the cells that will be selected and shows their range.
+- Sprites: a see-through copy of the sprite shows where it will be drawn, fitted into its cells exactly as on the map, also while moving, rotating or resizing. A rotation preview darkens the original underneath, so the turned copy stands out.
+- Areas of effect: a see-through preview of the affected cells follows the pointer, with the origin dot and a label such as `20 ft sphere H15c`. A new area is previewed in yellow, since its colour is only chosen when it is created; a moved area keeps its own colour.
+- Picking: before a click, the sprite or area it would pick is outlined with its name, in red when the mode removes it.
+
+**Selecting cells.** The cell where the mouse button is pressed always counts, wherever in it the drag starts. From there, a drag adds each further column of which at least half the width lies inside the dragged rectangle, and each further row of which at least half the height does, so the far edge snaps to the nearest grid line. The result is always a rectangle of cells, the same kind of range as `B2:E8`. A drag that leaves the map stops at its edge, and a short drag inside one cell selects just that cell.
+
+**Picking sprites and areas.** A sprite is picked by clicking any cell of its footprint, an area of effect by clicking any of its cells, not by the exact shape of the image. Where several overlap, the topmost is picked: the one added last, which is also drawn on top. Sprites hidden under the fog of war can be picked on the mirror, where they are visible.
+
+**Moving.** A picked sprite or area can be put down with a second click, or dragged and released. It hangs from the pointer by the point where it was picked, so it does not jump. A sprite stays on the cells that are fully visible on the table screen. An area keeps its shape, size, direction and colour, and its new origin follows the same rules as when it is created (below).
+
+**Origins of areas of effect.** A sphere is centred on a grid corner (`E8c`) when the pointer is within a quarter of a cell of one, and on the cell's centre (`E8`) otherwise; the origin dot shows which. A cube starts at the grid corner nearest to the pointer, which becomes its top-left corner. A cone starts from the cell under the pointer, the caster's cell.
+
+**The mouse wheel.** When rotating a sprite, each notch turns it by the step given to the command, 15° by default; turning the wheel down rotates clockwise. The label shows the total, and the rotation is applied the short way round. When aiming a cone, each notch down steps clockwise through all twelve variants: n, n mirrored, ne, e, e mirrored, se, s, s mirrored, sw, w, w mirrored, nw. A touchpad works too: its small scroll steps add up to whole notches.
+
+**Leaving a mode.** A mode ends with Esc, a right-click on the mirror, another mode command, closing the mirror, or when the mirror loses focus, for example by clicking in the console to type the next command. While a sprite or area is picked up (moving, rotating or resizing), the first Esc or right-click only puts it back; the next one ends the mode. The console prints why a mode ended. While a mode is on, the mouse pointer over the map is a crosshair and the mirror's title names the mode, such as `battlemap_mirror — revealing fog (Esc to stop)`.
 
 **Focus.** Opening the mirror and starting a mode bring the mirror to the front with keyboard focus, so Esc works straight away. Afterwards, the console has to be clicked before typing the next command. If the operating system refuses to hand over the focus, the first click on the mirror gives it focus instead; losing focus only ends a mode after the mirror has had it.
 
@@ -286,10 +310,19 @@ A mode command opens the mirror if it is not open yet. Everything that can be ch
 | `map mirror coords on` / `off` | Show or hide the mirror's coordinate rulers |
 | `map mirror fow reveal` / `hide` | Reveal or hide fog by clicking or dragging on the mirror |
 | `map mirror sprite add <file> [as <name>]` | Place sprites by clicking or dragging on the mirror |
+| `map mirror sprite remove` | Remove sprites by clicking them on the mirror |
+| `map mirror sprite move` | Move sprites on the mirror (click-click or drag) |
+| `map mirror sprite rotate [step]` | Rotate sprites with the mouse wheel on the mirror (default step 15°) |
+| `map mirror sprite resize` | Resize sprites by dragging their new footprint on the mirror |
+| `map mirror aoe sphere <radius> [as <name>]` | Place spheres with a live preview on the mirror |
+| `map mirror aoe cube <size> [as <name>]` | Place cubes with a live preview on the mirror |
+| `map mirror aoe cone <length> [as <name>]` | Place cones on the mirror, aimed with the mouse wheel |
+| `map mirror aoe remove` | Remove areas of effect by clicking them on the mirror |
+| `map mirror aoe move` | Move areas of effect on the mirror (click-click or drag) |
 
 ## How it is drawn
 
-Everything is drawn on a single Tk canvas in layers, from bottom to top: backdrop, sprites, fog of war, areas of effect, grid, coordinate labels. Grid lines and labels therefore stay visible on top of everything, areas are drawn over sprites and fog, and the fog hides the backdrop and sprites.
+Everything is drawn on a single Tk canvas in layers, from bottom to top: backdrop, sprites, fog of war, areas of effect, grid, coordinate labels. Grid lines and labels therefore stay visible on top of everything, areas are drawn over sprites and fog, and the fog hides the backdrop and sprites. On the mirror, the previews of mouse input are drawn on one more layer above all of these, which stays on top when the map underneath is redrawn.
 
 Only the backdrop is expensive to redraw: scaling a 4K image takes noticeable time and memory. Changes to the other layers never cause the backdrop to be redrawn, and a video backdrop reuses one image for every frame.
 
@@ -307,7 +340,8 @@ The shared state (backdrop, cell scale, coordinate style, sprites, areas of effe
 | `video.py` | Streaming `.webm` decoder running on a background thread |
 | `views/battlemap_view.py` | The canvas and its layers |
 | `views/mirror.py` | The game master mirror: the scaled copy of the table view and its rulers |
-| `views/mirror_input.py` | Mouse input on the mirror: modes, the selection preview and the commands they produce |
+| `views/mirror_input.py` | Mouse input on the mirror: running a mode, focus, the mouse wheel, ending modes and drawing previews |
+| `views/mirror_tools.py` | What the mouse does in each mode: selecting cells, picking, moving, rotating and resizing sprites, placing, moving and removing areas of effect |
 | `views/animation.py` | The shared animation clock, the video backdrop and sprite animations |
 | `styling.py` | Colours used by the view |
 
