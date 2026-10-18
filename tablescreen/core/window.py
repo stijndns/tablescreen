@@ -172,7 +172,11 @@ class Window:
             if sid != slot_id:
                 slot.hide()
         target._pack()
-        self.toplevel.deiconify()
+        # Only a closed (withdrawn) or minimised window: on Windows, deiconify
+        # on a visible window activates it and steals the keyboard focus
+        # (it ended mirror modes on every sprite placed).
+        if self.toplevel.state() != "normal":
+            self.toplevel.deiconify()
 
     def visible_slot(self) -> Optional[str]:
         for sid, slot in self._slots.items():
