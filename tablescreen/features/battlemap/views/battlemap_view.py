@@ -5,8 +5,9 @@ One canvas in tagged layers: backdrop → sprites → fog → aoe → grid → c
 (bottom to top).
 The backdrop is a static image or a streamed video (see animation.py); it is
 expensive, so other layers never force it to redraw. Mainloop thread only.
-A mirror view (see mirror.py) differs in three ways: a video backdrop is a
-still, loading is quiet, and fog is see-through for the DM.
+A mirror view (see mirror.py) differs in four ways: a video backdrop and
+animated sprites are stills (their first frame), loading is quiet, and fog
+is see-through for the DM.
 """
 
 from __future__ import annotations
@@ -76,8 +77,9 @@ class BattleMapView(tk.Frame):
     def __init__(self, parent: tk.Widget, grid_settings: GridSettings,
                  ppi_provider: PpiProvider, *,
                  backdrops: Optional[BackdropCache] = None, mirror: bool = False):
-        """mirror: a DM copy of the table view. Shows a video backdrop as a
-        still and loads quietly (the table view reports)."""
+        """mirror: a DM copy of the table view. Shows a video backdrop and
+        animated sprites as stills (their first frame) and loads quietly (the
+        table view reports)."""
         super().__init__(parent, bg=PALETTE["bg"])
         self.canvas = tk.Canvas(self, bg=PALETTE["surface"], bd=0, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
@@ -314,7 +316,7 @@ class BattleMapView(tk.Frame):
                 if not loaded:
                     continue
                 frames[key] = loaded
-                if source.animated:
+                if source.animated and not self._mirror:
                     anims[key] = self._sprite_anims.get(key) or SpriteAnimation(
                         self.canvas, frames[key], list(source.durations),
                         start=self._anim_start(sprite.file))
@@ -357,9 +359,16 @@ class BattleMapView(tk.Frame):
 
     def _load_frames(self, file: str, size: tuple[int, int],
                      rotation: float) -> list[ImageTk.PhotoImage]:
+        """Every frame; a mirror only the first: the DM needs what and where,
+        not the animation (as with a video backdrop), and every frame costs
+        memory and a repaint."""
         try:
-            return [ImageTk.PhotoImage(f)
-                    for f in scaled_frames(IMAGES_DIR / file, size, rotation)]
+            frames = scaled_frames(IMAGES_DIR / file, size, rotation)
+            if self._mirror:
+                first = ImageTk.PhotoImage(next(frames))
+                frames.close()
+                return [first]
+            return [ImageTk.PhotoImage(f) for f in frames]
         except Exception as exc:
             print(f"[!] Could not load sprite image {file}: {exc}")
             return []

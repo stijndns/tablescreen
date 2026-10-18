@@ -217,7 +217,7 @@ The mirror differs from the table screen in four ways:
 - **Its own grid and coordinates.** `map mirror grid on|off` and `map mirror coords on|off` control the mirror only, and both are on when it opens. `map grid on|off` and `map coords on|off|location` control the table only. The coordinate style (`map coords style`) applies to both.
 - **Rulers instead of labels.** Coordinates are shown as rulers outside the map: column numbers above it and row labels to its left. Their font size is fixed and follows the display scaling, so they stay readable however small the cells are. When a cell is too small for its label, the rulers label every 2nd, 5th, 10th, ... cell.
 - **See-through fog.** Hidden cells are darkened rather than black, so the game master sees what is under the fog, including sprites placed in hidden areas. Tk canvas shapes cannot be transparent, but images can, so the mirror's fog is drawn as one semi-transparent image.
-- **Still video backdrops.** A `.webm` backdrop is shown as a still image of its first frame, so the video is not decoded a second time.
+- **Stills instead of animation.** A `.webm` backdrop is shown as a still image of its first frame, so the video is not decoded a second time, and animated sprites show their first frame too: the mirror is for seeing what is where, and every animation frame would cost memory and repaints.
 
 The display settings never change the battlemap itself. `map mirror grid` and `map mirror coords` only change what the mirror shows, the cell size always comes from the table, and resizing or closing the mirror leaves the table screen untouched. The only way the mirror changes the map is mouse input, described below, and that goes through the normal commands.
 
