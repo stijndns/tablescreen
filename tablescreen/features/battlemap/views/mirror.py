@@ -144,6 +144,11 @@ class MirrorView:
                 self._left.create_text(margin_x - pad, y, text=row_label(row, style),
                                        anchor="e", font=font, fill=color)
 
+    @property
+    def font(self) -> tkfont.Font:
+        """The rulers' font: readable at any cell size."""
+        return self._font
+
     def map_size(self) -> tuple[int, int]:
         """As laid out; Tk applies the placement only when idle."""
         if self._map_size is not None:

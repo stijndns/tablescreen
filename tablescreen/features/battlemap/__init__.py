@@ -27,6 +27,7 @@ from .sprite_images import FRAME_MEMORY_WARN_BYTES
 from .video import VIDEO_EXTENSIONS
 from .views.battlemap_view import BackdropCache, BattleMapView
 from .views.mirror import MirrorView
+from .views.mirror_input import MirrorInput, MirrorMode
 
 CURRENT_OS = platform.system()
 
@@ -100,6 +101,10 @@ DM mirror (a scaled copy of the battlemap in its own window; one at most):
     map mirror grid on | off        — the mirror's own grid (starts on)
     map mirror coords on | off      — rulers with coordinates around the
                                       mirror's map (start on)
+    map mirror fow reveal | hide    — reveal or hide fog with the mouse on the
+                                      mirror: click a cell or drag over cells;
+                                      Esc, a right-click or leaving the mirror
+                                      stops
 """
 
 
@@ -157,6 +162,7 @@ class BattleMapFeature(FeatureBase):
         self.grid_settings = GridSettings()
         self.backdrops = BackdropCache()      # decoded once for all views
         self.mirror: Optional[MirrorView] = None
+        self.mirror_input: Optional[MirrorInput] = None
 
     # ── Build ─────────────────────────────────────────────────────────────
 
@@ -360,11 +366,17 @@ class BattleMapFeature(FeatureBase):
 
     def _cmd_mirror(self, rest: list[str]) -> None:
         words = [w.lower() for w in rest] or ["status"]
-        if (words[0] in ("status", "show", "remove") and len(words) == 1
+        if words[0] == "fow" and words[1:] in (["reveal"], ["hide"]):
+            if not self.state.fow_on:       # checked before any clicking
+                print("[!] Fog of war is off. Turn it on with 'map fow on' first.")
+                return
+            self.services.send(self.name, "mirror", tuple(words))
+        elif (words[0] in ("status", "show", "remove") and len(words) == 1
                 or words[0] in ("grid", "coords") and words[1:] in (["on"], ["off"])):
             self.services.send(self.name, "mirror", tuple(words))  # mainloop
         else:
-            print("Usage: map mirror [show | remove | grid on|off | coords on|off]")
+            print("Usage: map mirror [show | remove | grid on|off | coords on|off "
+                  "| fow reveal|hide]")
 
     def _cmd_aoe(self, rest: list[str]) -> None:
         action = rest[0].lower() if rest else ""
@@ -550,6 +562,8 @@ class BattleMapFeature(FeatureBase):
             action, *args = message.arg
             if action in ("grid", "coords"):
                 self._mirror_setting(action, args[0] == "on")
+            elif action == "fow":
+                self._mirror_fow_mode(args[0])
             else:
                 {"show": self._mirror_show, "remove": self._mirror_remove,
                  "status": self._mirror_status}[action]()
@@ -561,12 +575,13 @@ class BattleMapFeature(FeatureBase):
 
     # ── DM mirror (mainloop thread) ───────────────────────────────────────
 
-    def _mirror_show(self) -> None:
+    def _mirror_show(self, announce_open: bool = True) -> None:
         windows = self.services.windows
         if self.mirror is not None:
-            windows.get_window(MIRROR_WINDOW).show_window()
-            print("[i] The mirror is already open (one at most); "
-                  "brought it to the front.")
+            self.mirror_input.focus()
+            if announce_open:
+                print("[i] The mirror is already open (one at most); "
+                      "brought it to the front.")
             return
         table = windows.get_window(self.services.window_name())
         geometry = table.initial_geometry or table.default_geometry
@@ -577,8 +592,11 @@ class BattleMapFeature(FeatureBase):
                                  lambda: self._calibration()[0], self.grid_settings,
                                  self.backdrops, _geometry_size(table.default_geometry))
         self.views.append(self.mirror)
+        self.mirror_input = MirrorInput(
+            self.mirror, lambda line: self.services.execute(line, "mirror"))
         slot.show()
         self.mirror.render(self.snapshot())
+        self.mirror_input.focus()
         print(f"[+] Mirror opened at {geometry}. "
               f"Close it with 'map mirror remove' or its X button.")
 
@@ -586,9 +604,10 @@ class BattleMapFeature(FeatureBase):
         if self.mirror is None:
             print("[i] There is no mirror to remove.")
             return
+        self.mirror_input.stop("the mirror was closed")
         self.mirror.close()             # stops background work first
         self.views.remove(self.mirror)
-        self.mirror = None
+        self.mirror = self.mirror_input = None
         self.services.windows.remove_window(MIRROR_WINDOW)
         print("[+] Mirror removed.")
 
@@ -605,7 +624,19 @@ class BattleMapFeature(FeatureBase):
               + (f" ({scale:.2f}x the battlemap)" if scale else "")
               + (f", cells {cell:.1f} px" if cell else ", cell size unknown")
               + f"; grid {_on_off(self.mirror.show_grid)}, "
-                f"coords {_on_off(self.mirror.show_rulers)}.")
+                f"coords {_on_off(self.mirror.show_rulers)}"
+              + (f"; {self.mirror_input.mode.label}" if self.mirror_input.mode else "")
+              + ".")
+
+    def _mirror_fow_mode(self, action: str) -> None:
+        """Clicks and drags on the mirror reveal or hide fog, until the mode
+        ends. Opens the mirror if needed."""
+        self._mirror_show(announce_open=False)
+        self.mirror_input.start(MirrorMode(
+            label="revealing fog" if action == "reveal" else "hiding fog",
+            hint=f"click a cell or drag over cells to {action} them.",
+            command=lambda area: (f"map fow {action} "
+                                  f"{area_label(area, self.mirror.view.coords_style)}")))
 
     def _mirror_setting(self, setting: str, on: bool) -> None:
         if self.mirror is None:
@@ -752,9 +783,11 @@ class BattleMapFeature(FeatureBase):
             return [s for s in options if s.startswith(text)]
         if sub == "mirror":
             if len(parts) == 2:
-                options = ("show", "remove", "grid", "coords")
+                options = ("show", "remove", "grid", "coords", "fow")
             elif len(parts) == 3 and parts[2].lower() in ("grid", "coords"):
                 options = ("on", "off")
+            elif len(parts) == 3 and parts[2].lower() == "fow":
+                options = ("reveal", "hide")
             else:
                 options = ()
             return [o for o in options if o.startswith(text.lower())]

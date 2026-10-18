@@ -139,6 +139,46 @@ def pixels_to_cell(x: float, y: float, cell: float) -> tuple[int, int]:
     return math.floor(y / cell + 1e-9) + 1, math.floor(x / cell + 1e-9) + 1
 
 
+# A drag on the mirror selects a column (row) when at least this share of
+# its width (height) is inside the dragged rectangle: 0.5 = each edge snaps
+# to the nearest grid line.
+DRAG_THRESHOLD = 0.5
+
+
+def drag_span(a: float, b: float, cell: float, extent: float,
+              threshold: float = DRAG_THRESHOLD) -> Optional[tuple[int, int]]:
+    """(first, last) cells, 1-based, along one axis that a drag from a to b
+    covers by at least ``threshold`` of their size; None if none. A partial
+    last cell is judged by its visible part (up to ``extent``)."""
+    if cell <= 0:
+        raise ValueError("cell size must be positive")
+    lo, hi = sorted((a, b))
+    first = last = None
+    for i in range(max(1, math.floor(lo / cell) + 1), math.ceil(hi / cell) + 1):
+        start = cell_to_pixels(row=1, col=i, cell=cell)[0]
+        end = min(start + cell, extent)
+        if end <= start:
+            break
+        covered = min(hi, end) - max(lo, start)
+        if covered >= threshold * (end - start) - 1e-9:
+            first = first or i
+            last = i
+    return (first, last) if first else None
+
+
+def drag_area(start: tuple[float, float], end: tuple[float, float], cell: float,
+              size: tuple[float, float],
+              threshold: float = DRAG_THRESHOLD) -> Optional[CellArea]:
+    """The cells a dragged rectangle selects, decided per axis, so the result
+    is always a rectangle of cells (a corner cell needs no more coverage than
+    an edge cell). ``size`` is the canvas (width, height). None if no cell."""
+    cols = drag_span(start[0], end[0], cell, size[0], threshold)
+    rows = drag_span(start[1], end[1], cell, size[1], threshold)
+    if cols is None or rows is None:
+        return None
+    return CellArea(rows[0], cols[0], rows[1], cols[1])
+
+
 def letterbox(content: tuple[int, int], box: tuple[int, int]) -> tuple[float, int, int]:
     """Largest uniform scale at which ``content`` (width, height) fits in
     ``box``, and the scaled size: (scale, width, height). The rest of the box
