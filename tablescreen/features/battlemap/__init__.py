@@ -29,7 +29,7 @@ from .video import VIDEO_EXTENSIONS
 from .views.battlemap_view import BackdropCache, BattleMapView
 from .views.mirror import MirrorView
 from .views.mirror_input import MirrorInput
-from .views.mirror_tools import AreaTool
+from .views.mirror_tools import AreaTool, SpriteMoveTool, SpriteRemoveTool
 
 CURRENT_OS = platform.system()
 
@@ -112,6 +112,11 @@ DM mirror (a scaled copy of the battlemap in its own window; one at most):
                                       cell or drag over a range; with a name
                                       one sprite, without one as many as
                                       clicked (sprite1, sprite2, ...)
+    map mirror sprite remove        — click a sprite to remove it (the
+                                      topmost one in that cell)
+    map mirror sprite move          — click a sprite, then click where it
+                                      goes (or drag it there); Esc puts a
+                                      picked-up sprite back
 """
 
 
@@ -375,6 +380,11 @@ class BattleMapFeature(FeatureBase):
         words = [w.lower() for w in rest] or ["status"]
         if words[:2] == ["sprite", "add"]:
             self._cmd_mirror_sprite_add(rest[2:])      # file names keep their case
+        elif words in (["sprite", "remove"], ["sprite", "move"]):
+            if not self.state.sprites:
+                print(f"[i] There are no sprites to {words[1]}.")
+                return
+            self.services.send(self.name, "mirror", tuple(words))
         elif words[0] == "fow" and words[1:] in (["reveal"], ["hide"]):
             if not self.state.fow_on:       # checked before any clicking
                 print("[!] Fog of war is off. Turn it on with 'map fow on' first.")
@@ -385,7 +395,8 @@ class BattleMapFeature(FeatureBase):
             self.services.send(self.name, "mirror", tuple(words))  # mainloop
         else:
             print("Usage: map mirror [show | remove | grid on|off | coords on|off "
-                  "| fow reveal|hide | sprite add <file> [as <name>]]")
+                  "| fow reveal|hide | sprite add <file> [as <name>] "
+                  "| sprite remove | sprite move]")
 
     def _cmd_mirror_sprite_add(self, args: list[str]) -> None:
         """Check everything `map sprite add` would, except the cells, before
@@ -595,6 +606,10 @@ class BattleMapFeature(FeatureBase):
                 self._mirror_setting(action, args[0] == "on")
             elif action == "fow":
                 self._mirror_fow_mode(args[0])
+            elif action == "sprite" and len(args) == 1:      # remove | move
+                self._mirror_show(announce_open=False)
+                self.mirror_input.start(SpriteRemoveTool() if args[0] == "remove"
+                                        else SpriteMoveTool())
             elif action == "sprite":
                 self._mirror_sprite_mode(*args)
             else:
@@ -837,7 +852,7 @@ class BattleMapFeature(FeatureBase):
             elif len(parts) == 3 and parts[2].lower() == "fow":
                 options = ("reveal", "hide")
             elif len(parts) == 3 and parts[2].lower() == "sprite":
-                options = ("add",)
+                options = ("add", "remove", "move")
             elif len(parts) == 4 and parts[2:4] == ["sprite", "add"]:
                 clean = line.split()[-1] if not line.endswith(" ") else ""
                 return tab_completion(clean, list(Image.registered_extensions()),

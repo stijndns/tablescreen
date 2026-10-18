@@ -263,10 +263,14 @@ class MirrorInput:
 
     def area_label(self, area: CellArea, color: str = PREVIEW_COLOR) -> None:
         """The range (``B3:D7``) in the area's top-left corner."""
+        self.label_at(area, area_label(area, self.style), color)
+
+    def label_at(self, area: CellArea, text: str, color: str = PREVIEW_COLOR) -> None:
+        """Text in the area's top-left corner."""
         cell = self.cell
         if cell:
             x, y, _, _ = area_to_pixels(area, cell)
-            self.text(x + 5, y + 4, area_label(area, self.style), color)
+            self.text(x + 5, y + 4, text, color)
 
     def ghost(self, file: str, rotation: float, area: CellArea) -> None:
         """A see-through sprite fitted in the area, as the battlemap would draw
