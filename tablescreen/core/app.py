@@ -26,6 +26,7 @@ from __future__ import annotations
 import importlib
 import platform
 import re
+import signal
 import tkinter as tk
 import tomllib
 from pathlib import Path
@@ -259,8 +260,20 @@ class Application:
         except tk.TclError:
             pass
 
+    def _on_interrupt(self, signum, frame) -> None:
+        """Ctrl-C: the same clean exit as `exit`, instead of a traceback out of
+        the main loop that skips every feature's shutdown(). A second Ctrl-C
+        gets Python's default (KeyboardInterrupt), in case shutdown hangs."""
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        print("\n[i] Interrupted (Ctrl-C); closing.")
+        self.root.after_idle(self.shutdown)     # main thread, between Tk events
+
     def run(self) -> None:
         """Build everything, start the executor and console, run the mainloop."""
+        # Python runs signal handlers on the main thread, which is in the Tk
+        # main loop; catching KeyboardInterrupt alone isn't enough, because
+        # Tkinter swallows it (with a traceback) inside our callbacks.
+        signal.signal(signal.SIGINT, self._on_interrupt)
         self.build_features()
 
         if not self.features:
@@ -271,6 +284,9 @@ class Application:
 
         try:
             self.root.mainloop()
+        except KeyboardInterrupt:       # second Ctrl-C, or one before the handler
+            print("\n[i] Interrupted (Ctrl-C).")
+            self.shutdown()
         finally:
             try:
                 self.root.destroy()
