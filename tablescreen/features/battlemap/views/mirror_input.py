@@ -21,7 +21,7 @@ import math
 import tkinter as tk
 from typing import Callable, Optional
 
-from PIL import ImageTk
+from PIL import Image, ImageTk
 
 from ....core.paths import IMAGES_DIR
 from ..model.grid import CellArea, area_label, area_to_pixels, drag_area, pixels_to_cell
@@ -34,6 +34,7 @@ PREVIEW_TAG = "mirror_preview"      # with OVERLAY_TAG, which the view keeps on 
 PREVIEW_COLOR = "#ffd000"
 PREVIEW_SHADOW = "black"
 GHOST_OPACITY = 0.4                 # sprite previews: see-through
+SHADE_ALPHA = 170                   # of 255: dims what a preview replaces
 CLICK_SLOP_PX = 4       # a press and release closer than this is a click
 FOCUS_CHECK_MS = 50     # focus moves as FocusOut then FocusIn: look after both
 WHEEL_NOTCH = 120       # Windows' delta per mouse notch; touchpads send less
@@ -271,6 +272,23 @@ class MirrorInput:
         if cell:
             x, y, _, _ = area_to_pixels(area, cell)
             self.text(x + 5, y + 4, text, color)
+
+    def shade(self, area: CellArea) -> None:
+        """Dim an area (e.g. the sprite a rotation preview replaces), so a
+        ghost drawn over it stands out. Canvas fills can't be transparent;
+        images can."""
+        cell = self.cell
+        if not cell:
+            return
+        x, y, w, h = area_to_pixels(area, cell)
+        size = (max(1, round(w)), max(1, round(h)))
+        key = ("shade", size)
+        if key not in self._ghosts:
+            self._ghosts[key] = ImageTk.PhotoImage(
+                Image.new("RGBA", size, (0, 0, 0, SHADE_ALPHA)))
+        photo = self._ghosts[key]
+        self._images.append(photo)
+        self._canvas.create_image(x, y, image=photo, anchor="nw", tags=self._tags())
 
     def ghost(self, file: str, rotation: float, area: CellArea) -> None:
         """A see-through sprite fitted in the area, as the battlemap would draw

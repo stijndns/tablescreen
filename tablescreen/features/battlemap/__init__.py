@@ -29,7 +29,8 @@ from .video import VIDEO_EXTENSIONS
 from .views.battlemap_view import BackdropCache, BattleMapView
 from .views.mirror import MirrorView
 from .views.mirror_input import MirrorInput
-from .views.mirror_tools import AreaTool, SpriteMoveTool, SpriteRemoveTool
+from .views.mirror_tools import (AreaTool, SpriteMoveTool, SpriteRemoveTool,
+                                 SpriteResizeTool, SpriteRotateTool)
 
 CURRENT_OS = platform.system()
 
@@ -117,6 +118,11 @@ DM mirror (a scaled copy of the battlemap in its own window; one at most):
     map mirror sprite move          — click a sprite, then click where it
                                       goes (or drag it there); Esc puts a
                                       picked-up sprite back
+    map mirror sprite rotate [step] — click a sprite, turn the wheel (step
+                                      degrees a notch, default 15; down =
+                                      clockwise), click to apply
+    map mirror sprite resize        — click a sprite, then drag its new
+                                      footprint
 """
 
 
@@ -380,11 +386,9 @@ class BattleMapFeature(FeatureBase):
         words = [w.lower() for w in rest] or ["status"]
         if words[:2] == ["sprite", "add"]:
             self._cmd_mirror_sprite_add(rest[2:])      # file names keep their case
-        elif words in (["sprite", "remove"], ["sprite", "move"]):
-            if not self.state.sprites:
-                print(f"[i] There are no sprites to {words[1]}.")
-                return
-            self.services.send(self.name, "mirror", tuple(words))
+        elif words[0] == "sprite" and words[1:2] in (["remove"], ["move"], ["rotate"],
+                                                      ["resize"]):
+            self._cmd_mirror_sprite_tool(words[1], words[2:])
         elif words[0] == "fow" and words[1:] in (["reveal"], ["hide"]):
             if not self.state.fow_on:       # checked before any clicking
                 print("[!] Fog of war is off. Turn it on with 'map fow on' first.")
@@ -396,7 +400,29 @@ class BattleMapFeature(FeatureBase):
         else:
             print("Usage: map mirror [show | remove | grid on|off | coords on|off "
                   "| fow reveal|hide | sprite add <file> [as <name>] "
-                  "| sprite remove | sprite move]")
+                  "| sprite remove | sprite move | sprite rotate [step] "
+                  "| sprite resize]")
+
+    def _cmd_mirror_sprite_tool(self, verb: str, args: list[str]) -> None:
+        """remove, move, rotate [step], resize: tools that pick a sprite."""
+        step = 15.0
+        if verb == "rotate" and len(args) == 1:
+            try:
+                step = float(args[0])
+            except ValueError:
+                step = math.nan
+            if not (math.isfinite(step) and 0 < step < 360):
+                print("Usage: map mirror sprite rotate [step]  "
+                      "(degrees a wheel notch, more than 0 and less than 360)")
+                return
+        elif args:
+            print(f"Usage: map mirror sprite {verb}"
+                  + (" [step]" if verb == "rotate" else ""))
+            return
+        if not self.state.sprites:
+            print(f"[i] There are no sprites to {verb}.")
+            return
+        self.services.send(self.name, "mirror", ("sprite_tool", verb, step))
 
     def _cmd_mirror_sprite_add(self, args: list[str]) -> None:
         """Check everything `map sprite add` would, except the cells, before
@@ -606,10 +632,13 @@ class BattleMapFeature(FeatureBase):
                 self._mirror_setting(action, args[0] == "on")
             elif action == "fow":
                 self._mirror_fow_mode(args[0])
-            elif action == "sprite" and len(args) == 1:      # remove | move
+            elif action == "sprite_tool":
+                verb, step = args
                 self._mirror_show(announce_open=False)
-                self.mirror_input.start(SpriteRemoveTool() if args[0] == "remove"
-                                        else SpriteMoveTool())
+                self.mirror_input.start(
+                    SpriteRotateTool(step) if verb == "rotate"
+                    else {"remove": SpriteRemoveTool, "move": SpriteMoveTool,
+                          "resize": SpriteResizeTool}[verb]())
             elif action == "sprite":
                 self._mirror_sprite_mode(*args)
             else:
@@ -852,7 +881,7 @@ class BattleMapFeature(FeatureBase):
             elif len(parts) == 3 and parts[2].lower() == "fow":
                 options = ("reveal", "hide")
             elif len(parts) == 3 and parts[2].lower() == "sprite":
-                options = ("add", "remove", "move")
+                options = ("add", "remove", "move", "rotate", "resize")
             elif len(parts) == 4 and parts[2:4] == ["sprite", "add"]:
                 clean = line.split()[-1] if not line.endswith(" ") else ""
                 return tab_completion(clean, list(Image.registered_extensions()),

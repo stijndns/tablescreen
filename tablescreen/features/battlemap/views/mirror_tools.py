@@ -13,7 +13,7 @@ import math
 from typing import TYPE_CHECKING, Callable, Optional
 
 from ..model.battlemap_state import Sprite, sprite_at
-from ..model.grid import CellArea, cell_label
+from ..model.grid import CellArea, area_label, cell_label
 
 if TYPE_CHECKING:
     from .mirror_input import MirrorInput
@@ -155,7 +155,54 @@ class SpriteRemoveTool(MirrorTool):
         self.ctx.submit(f"map sprite remove {sprite.name}")
 
 
-class SpriteMoveTool(MirrorTool):
+class SpritePickTool(MirrorTool):
+    """Base for tools that first pick a sprite (the topmost in a cell), then
+    do something with it. Esc puts a picked sprite back."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._held: Optional[Sprite] = None
+        self._shown: Optional[tuple] = None     # what the preview shows now
+
+    def _sprite_under(self, pos: Pos) -> tuple[Optional[tuple[int, int]], Optional[Sprite]]:
+        cell = self.ctx.cell_at(pos)
+        return cell, (sprite_at(self.ctx.sprites, *cell) if cell else None)
+
+    def _show_pickable(self, pos: Pos) -> None:
+        """Outline the sprite a click would pick."""
+        cell, sprite = self._sprite_under(pos)
+        key = ("pick", sprite.name if sprite else None, cell if sprite is None else None)
+        if key == self._shown:
+            return
+        self._shown = key
+        self.ctx.clear()
+        if sprite is not None:
+            self.ctx.outline(sprite.area, width=2)
+            self.ctx.label_at(sprite.area, sprite.name)
+
+    def _no_sprite(self, cell: Optional[tuple[int, int]]) -> None:
+        if cell:
+            print(f"[i] Mirror: no sprite in {cell_label(*cell, self.ctx.style)}.")
+
+    def leave(self) -> None:
+        if self._held is None:
+            self._shown = None
+            super().leave()
+
+    def cancel(self) -> bool:
+        if self._held is None:
+            return False
+        name = self._held.name
+        self._drop()
+        print(f"[i] Mirror: put {name} back.")
+        return True
+
+    def _drop(self) -> None:
+        self._held, self._shown = None, None
+        self.ctx.clear()
+
+
+class SpriteMoveTool(SpritePickTool):
     """Pick a sprite, then put it somewhere else: click it and click where it
     goes, or drag it there. It hangs from the pointer by the cell it was
     picked at, and its footprint stays on the map. Esc drops it."""
@@ -165,10 +212,8 @@ class SpriteMoveTool(MirrorTool):
 
     def __init__(self) -> None:
         super().__init__()
-        self._held: Optional[Sprite] = None
         self._grab = (0, 0)             # picked cell − footprint top-left
         self._carrying = False          # picked with a click: follows the pointer
-        self._shown: Optional[tuple] = None     # what the preview shows now
 
     # Picking (nothing held) and carrying (held) share the pointer hooks.
 
@@ -178,16 +223,10 @@ class SpriteMoveTool(MirrorTool):
         else:
             self._show_pickable(pos)
 
-    def leave(self) -> None:
-        if self._held is None:
-            self._shown = None
-            super().leave()
-
     def press(self, pos: Pos) -> None:
         if self._held is not None:
             return                      # carrying: it lands on release
-        cell = self.ctx.cell_at(pos)
-        sprite = sprite_at(self.ctx.sprites, *cell) if cell else None
+        cell, sprite = self._sprite_under(pos)
         if sprite is None:
             return
         self._held = sprite
@@ -200,9 +239,7 @@ class SpriteMoveTool(MirrorTool):
 
     def release(self, pos: Pos, click: bool) -> None:
         if self._held is None:
-            cell = self.ctx.cell_at(pos)
-            if cell:
-                print(f"[i] Mirror: no sprite in {cell_label(*cell, self.ctx.style)}.")
+            self._no_sprite(self.ctx.cell_at(pos))
             return
         if click and not self._carrying:
             self._carrying = True       # picked up: click again to put it down
@@ -216,17 +253,9 @@ class SpriteMoveTool(MirrorTool):
         self.ctx.submit(f"map sprite move {sprite.name} "
                         f"{cell_label(target.top, target.left, self.ctx.style)}")
 
-    def cancel(self) -> bool:
-        if self._held is None:
-            return False
-        name = self._held.name
-        self._drop()
-        print(f"[i] Mirror: put {name} back.")
-        return True
-
     def _drop(self) -> None:
-        self._held, self._carrying, self._shown = None, False, None
-        self.ctx.clear()
+        self._carrying = False
+        super()._drop()
 
     def _target(self, pos: Pos) -> Optional[CellArea]:
         """Where the held footprint would land: the pointer's cell minus the
@@ -255,14 +284,127 @@ class SpriteMoveTool(MirrorTool):
         ctx.label_at(target, f"{sprite.name} → "
                              f"{cell_label(target.top, target.left, ctx.style)}")
 
-    def _show_pickable(self, pos: Pos) -> None:
-        cell = self.ctx.cell_at(pos)
-        sprite = sprite_at(self.ctx.sprites, *cell) if cell else None
-        key = ("pick", sprite.name if sprite else None, cell if sprite is None else None)
-        if key == self._shown:
+
+class SpriteRotateTool(SpritePickTool):
+    """Click a sprite, turn the wheel to rotate a see-through copy of it (down =
+    clockwise, ``step`` degrees a notch), click to apply. Esc puts it back."""
+
+    label = "rotating sprites"
+
+    def __init__(self, step: float = 15) -> None:
+        super().__init__()
+        self.step = step
+        self.hint = (f"click a sprite, turn the wheel to rotate it ({step:g}° a "
+                     f"notch, down = clockwise), click to apply.")
+        self._delta = 0.0               # degrees clockwise, relative
+
+    def hover(self, pos: Pos) -> None:
+        if self._held is None:
+            self._show_pickable(pos)
+
+    def release(self, pos: Pos, click: bool) -> None:
+        if self._held is None:
+            cell, sprite = self._sprite_under(pos)
+            if sprite is None:
+                self._no_sprite(cell)
+                return
+            self._held, self._delta = sprite, 0.0
+            self._show()
             return
-        self._shown = key
+        sprite, delta = self._held, self._delta
+        self._drop()
+        if delta == 0:
+            print(f"[i] Mirror: {sprite.name} keeps its rotation.")
+            return
+        self.ctx.submit(f"map sprite rotate {sprite.name} {delta:g}")
+
+    def wheel(self, steps: int) -> None:
+        if self._held is None:
+            return
+        # Kept within -180..180 so the command takes the short way round.
+        self._delta = (self._delta - steps * self.step + 180) % 360 - 180
+        self._show()
+
+    def _show(self) -> None:
+        ctx, sprite = self.ctx, self._held
+        ctx.clear()
+        ctx.shade(sprite.area)          # the unrotated original is right below
+        ctx.ghost(sprite.file, sprite.rotation + self._delta, sprite.area)
+        ctx.outline(sprite.area)
+        ctx.label_at(sprite.area, f"{sprite.name} {self._delta:+g}°")
+
+
+class SpriteResizeTool(SpritePickTool):
+    """Click a sprite, then drag its new footprint (a click makes it 1x1 in
+    that cell); a see-through copy is fitted in it while dragging. Release
+    applies. Esc puts it back."""
+
+    label = "resizing sprites"
+    hint = "click a sprite, then drag its new footprint (a click: one cell)."
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._start: Optional[Pos] = None       # drag start, once held
+
+    def hover(self, pos: Pos) -> None:
+        if self._held is None:
+            self._show_pickable(pos)
+            return
+        cell = self.ctx.cell_at(pos)
+        if ("hover", cell) == self._shown:
+            return
+        self._shown = ("hover", cell)
+        self._show_held()
+        if cell is not None:
+            self.ctx.outline(CellArea(*cell, *cell), width=2)
+
+    def press(self, pos: Pos) -> None:
+        if self._held is not None:
+            self._start = pos
+            self.drag(pos)
+
+    def drag(self, pos: Pos) -> None:
+        if self._held is None or self._start is None:
+            return
+        ctx = self.ctx
+        self._shown = None
+        self._show_held()
+        ctx.dashed_rect(self._start, pos)
+        area = ctx.selection(self._start, pos)
+        if area is not None:
+            ctx.ghost(self._held.file, self._held.rotation, area)
+            ctx.outline(area)
+            ctx.area_label(area)
+
+    def release(self, pos: Pos, click: bool) -> None:
+        if self._held is None:
+            cell, sprite = self._sprite_under(pos)
+            if sprite is None:
+                self._no_sprite(cell)
+                return
+            self._held = sprite
+            self._shown = None
+            self._show_held()
+            return
+        if self._start is None:
+            return
+        area = self.ctx.selection(self._start, pos)
+        sprite = self._held
+        self._drop()
+        if area is None:
+            print("[i] Mirror: that rectangle covers no cell; nothing changed.")
+        elif area == sprite.area:
+            print(f"[i] Mirror: {sprite.name} keeps its size.")
+        else:
+            self.ctx.submit(f"map sprite resize {sprite.name} "
+                            f"{area_label(area, self.ctx.style)}")
+
+    def _drop(self) -> None:
+        self._start = None
+        super()._drop()
+
+    def _show_held(self) -> None:
+        """The picked sprite's current footprint, for reference."""
         self.ctx.clear()
-        if sprite is not None:
-            self.ctx.outline(sprite.area, width=2)
-            self.ctx.label_at(sprite.area, sprite.name)
+        self.ctx.outline(self._held.area, width=1)
+        self.ctx.label_at(self._held.area, self._held.name)
