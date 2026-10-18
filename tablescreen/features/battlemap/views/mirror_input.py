@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 import tkinter as tk
+from collections import OrderedDict
 from typing import Callable, Optional
 
 from PIL import Image, ImageColor, ImageTk
@@ -41,6 +42,11 @@ AOE_FILL_ALPHA = 90                 # of 255: an AoE preview's cells
 CLICK_SLOP_PX = 4       # a press and release closer than this is a click
 FOCUS_CHECK_MS = 50     # focus moves as FocusOut then FocusIn: look after both
 WHEEL_NOTCH = 120       # Windows' delta per mouse notch; touchpads send less
+# Preview images kept per surface for reuse. Unbounded, one wild drag over
+# many range sizes cached 247 table-sized ghosts (678 MB) and Tk on Windows
+# died with "Fail to allocate bitmap"; a drag changes the size with almost
+# every cell anyway, so a few recent ones cover going back and forth.
+PREVIEW_CACHE_SIZE = 8
 
 
 class MirrorInput:
@@ -332,11 +338,9 @@ class MirrorInput:
                 continue
             x, y, w, h = area_to_pixels(area, cell)
             size = (max(1, round(w)), max(1, round(h)))
-            key = ("shade", size)
-            if key not in surface.cache:
-                surface.cache[key] = ImageTk.PhotoImage(
-                    Image.new("RGBA", size, (0, 0, 0, SHADE_ALPHA)))
-            surface.show_image(surface.cache[key], x, y, "nw", tags)
+            photo = surface.cached(("shade", size), lambda: ImageTk.PhotoImage(
+                Image.new("RGBA", size, (0, 0, 0, SHADE_ALPHA))))
+            surface.show_image(photo, x, y, "nw", tags)
 
     def aoe_preview(self, aoe: AoE, color: str = PREVIEW_COLOR, label: str = "",
                     fill: bool = True, public: bool = False) -> None:
@@ -385,17 +389,16 @@ class MirrorInput:
             if not cell:
                 continue
             x, y, w, h = area_to_pixels(area, cell)
-            key = (file, rotation % 360, round(w), round(h))
-            if key not in surface.cache:
+
+            def make() -> Optional[ImageTk.PhotoImage]:
                 try:
-                    image = ghost_image(IMAGES_DIR / file, rotation, (w, h),
-                                        GHOST_OPACITY)
-                    surface.cache[key] = ImageTk.PhotoImage(image)
+                    return ImageTk.PhotoImage(ghost_image(
+                        IMAGES_DIR / file, rotation, (w, h), GHOST_OPACITY))
                 except Exception:
-                    surface.cache[key] = None   # the command reports the problem
-            if surface.cache[key] is not None:
-                surface.show_image(surface.cache[key], x + w / 2, y + h / 2,
-                                   "center", tags)
+                    return None         # the command reports the problem
+            photo = surface.cached((file, rotation % 360, round(w), round(h)), make)
+            if photo is not None:
+                surface.show_image(photo, x + w / 2, y + h / 2, "center", tags)
 
     def _surfaces(self, public: bool, table_layer: str) -> list[tuple["_Surface", tuple]]:
         """Where to draw: the mirror (above everything), plus the table when
@@ -436,7 +439,18 @@ class _Surface:
                  size: Callable[[], tuple[int, int]], tag: str):
         self.canvas, self.cell, self.size, self.tag = canvas, cell, size, tag
         self.images: list[ImageTk.PhotoImage] = []
-        self.cache: dict[tuple, Optional[ImageTk.PhotoImage]] = {}
+        self.cache: OrderedDict[tuple, Optional[ImageTk.PhotoImage]] = OrderedDict()
+
+    def cached(self, key: tuple, make: Callable[[], Optional[ImageTk.PhotoImage]]):
+        """The image for ``key``, made if needed; only the most recently used
+        PREVIEW_CACHE_SIZE are kept (one on screen stays alive via ``images``)."""
+        if key in self.cache:
+            self.cache.move_to_end(key)
+        else:
+            self.cache[key] = make()
+            while len(self.cache) > PREVIEW_CACHE_SIZE:
+                self.cache.popitem(last=False)
+        return self.cache[key]
 
     def show_image(self, photo, x: float, y: float, anchor: str, tags: tuple) -> None:
         self.images.append(photo)

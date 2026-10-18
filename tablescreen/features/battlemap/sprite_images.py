@@ -78,7 +78,9 @@ def ghost_image(path: Path, rotation: float, box: tuple[float, float],
     into ``box`` exactly as the battlemap draws it, at ``opacity`` (0-1)."""
     source = read_source(path)
     size = fit_size(rotated_size(source.size, rotation), box)
-    frame = next(scaled_frames(path, size, rotation))
+    frames = scaled_frames(path, size, rotation)
+    frame = next(frames)
+    frames.close()                  # closes the file now, not at garbage collection
     alpha = frame.getchannel("A").point(lambda a: round(a * opacity))
     frame.putalpha(alpha)
     return frame
