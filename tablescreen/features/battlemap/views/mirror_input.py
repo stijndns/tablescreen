@@ -62,6 +62,7 @@ class MirrorInput:
         self.table_shown = False            # T: public previews on the table too
         self._press: Optional[Pos] = None       # where the button went down
         self._pointer: Optional[Pos] = None     # last position on the map
+        self._motion_job: Optional[str] = None  # a redraw waiting for idle time
         self._armed = False     # the mirror had focus since the mode started
         self._wheel = 0         # delta not yet worth a whole notch
         self._wheel_events = False              # <MouseWheel> seen (Tk 9 on X11)
@@ -113,6 +114,7 @@ class MirrorInput:
             return
         label, self.mode = self.mode.label, None
         self._press = None
+        self._cancel_motion()
         self.table_shown = False
         self.clear()
         self._mirror_surface.cache.clear()
@@ -189,14 +191,44 @@ class MirrorInput:
 
     # ── Mouse ─────────────────────────────────────────────────────────────
 
+    # Motion only records the pointer; the preview is redrawn once the event
+    # loop is idle, with the latest position. Redrawing per event built a new
+    # image per event and kept the loop from ever idling, and Tk frees the
+    # bitmaps of images that left a canvas only when idle: on Windows a wild
+    # drag then ran out of them ("Fail to allocate bitmap" kills the process).
+
     def _on_hover(self, event) -> None:
         if self.mode is not None and self._press is None:
             self._pointer = self._clamp(event.x, event.y)
+            self._queue_motion()
+
+    def _on_drag(self, event) -> None:
+        if self.mode is not None and self._press is not None:
+            self._pointer = self._clamp(event.x, event.y)
+            self._queue_motion()
+
+    def _queue_motion(self) -> None:
+        if self._motion_job is None:
+            self._motion_job = self._top.after_idle(self._apply_motion)
+
+    def _cancel_motion(self) -> None:
+        if self._motion_job is not None:
+            self._top.after_cancel(self._motion_job)
+            self._motion_job = None
+
+    def _apply_motion(self) -> None:
+        self._motion_job = None
+        if self.mode is None or self._pointer is None:
+            return
+        if self._press is not None:
+            self.mode.drag(self._pointer)
+        else:
             self.mode.hover(self._pointer)
-            self._restack_table()
+        self._restack_table()
 
     def _on_leave(self, event) -> None:
         if self.mode is not None and self._press is None:
+            self._cancel_motion()
             self._pointer = None
             self.mode.leave()
 
@@ -204,20 +236,16 @@ class MirrorInput:
         if self.mode is None:
             return
         self._armed = True      # in use, whether or not Windows gave focus
+        self._cancel_motion()
         self._press = self._pointer = self._clamp(event.x, event.y)
         self.mode.press(self._press)
         self._restack_table()
-
-    def _on_drag(self, event) -> None:
-        if self.mode is not None and self._press is not None:
-            self._pointer = self._clamp(event.x, event.y)
-            self.mode.drag(self._pointer)
-            self._restack_table()
 
     def _on_release(self, event) -> None:
         if self.mode is None or self._press is None:
             return
         start, self._press = self._press, None
+        self._cancel_motion()           # a stale drag preview must not follow
         end = self._clamp(event.x, event.y)
         self.mode.release(end, math.dist(start, end) < CLICK_SLOP_PX)
         self._restack_table()
