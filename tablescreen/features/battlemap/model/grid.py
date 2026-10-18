@@ -184,6 +184,31 @@ def drag_area(start: tuple[float, float], end: tuple[float, float], cell: float,
     return CellArea(rows[0], cols[0], rows[1], cols[1])
 
 
+# A pointer this close to a grid intersection (as a share of a cell) means
+# that corner as an AoE origin (``E8c``) rather than the cell's centre.
+CORNER_SNAP = 0.25
+
+
+def pick_origin(x: float, y: float, cell: float,
+                allow: str = "both") -> tuple[int, int, bool]:
+    """The AoE origin a pointer at pixel (x, y) means, as (row, col, corner).
+    ``allow``: "both" (sphere) = the nearest grid intersection when within
+    CORNER_SNAP of a cell, else the cell centre; "corner" (cube) = always the
+    nearest intersection; "cell" (cone) = always the cell. A corner is named
+    after the cell whose top-left it is, like ``E8c``."""
+    if cell <= 0:
+        raise ValueError("cell size must be positive")
+    if allow != "cell":
+        # Half up, not round()'s half to even: a cell's dead centre always
+        # gives its bottom-right corner, on both axes alike.
+        line_col, line_row = math.floor(x / cell + 0.5), math.floor(y / cell + 0.5)
+        near = math.hypot(x - line_col * cell, y - line_row * cell) <= CORNER_SNAP * cell
+        if allow == "corner" or near:
+            return line_row + 1, line_col + 1, True
+    row, col = pixels_to_cell(x, y, cell)
+    return row, col, False
+
+
 def letterbox(content: tuple[int, int], box: tuple[int, int]) -> tuple[float, int, int]:
     """Largest uniform scale at which ``content`` (width, height) fits in
     ``box``, and the scaled size: (scale, width, height). The rest of the box

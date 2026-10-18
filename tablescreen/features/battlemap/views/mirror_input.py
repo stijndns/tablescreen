@@ -21,9 +21,10 @@ import math
 import tkinter as tk
 from typing import Callable, Optional
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageColor, ImageTk
 
 from ....core.paths import IMAGES_DIR
+from ..model.aoe import AoE, aoe_cells
 from ..model.grid import CellArea, area_label, area_to_pixels, drag_area, pixels_to_cell
 from ..sprite_images import ghost_image
 from .battlemap_view import OVERLAY_TAG
@@ -35,6 +36,7 @@ PREVIEW_COLOR = "#ffd000"
 PREVIEW_SHADOW = "black"
 GHOST_OPACITY = 0.4                 # sprite previews: see-through
 SHADE_ALPHA = 170                   # of 255: dims what a preview replaces
+AOE_FILL_ALPHA = 90                 # of 255: an AoE preview's cells
 CLICK_SLOP_PX = 4       # a press and release closer than this is a click
 FOCUS_CHECK_MS = 50     # focus moves as FocusOut then FocusIn: look after both
 WHEEL_NOTCH = 120       # Windows' delta per mouse notch; touchpads send less
@@ -290,6 +292,43 @@ class MirrorInput:
         self._images.append(photo)
         self._canvas.create_image(x, y, image=photo, anchor="nw", tags=self._tags())
 
+    def aoe_preview(self, aoe: AoE, color: str = PREVIEW_COLOR,
+                    label: str = "") -> None:
+        """An area of effect as it would be drawn: its cells filled
+        see-through, the outline around them and a dot on the origin, with
+        ``label`` beside the dot."""
+        cell = self.cell
+        if not cell:
+            return
+        map_w, map_h = self.map_size()
+        cells = {(r, c) for r, c in aoe_cells(aoe)
+                 if (c - 1) * cell < map_w and (r - 1) * cell < map_h}
+        if cells:
+            image, x0, y0 = cells_overlay(cells, cell, color, AOE_FILL_ALPHA)
+            photo = ImageTk.PhotoImage(image)
+            self._images.append(photo)
+            self._canvas.create_image(x0, y0, image=photo, anchor="nw",
+                                      tags=self._tags())
+        edge = max(2, round(cell / 22))
+        for row, col in cells:
+            x, y = (col - 1) * cell, (row - 1) * cell
+            for (dr, dc), line in (((-1, 0), (x, y, x + cell, y)),
+                                   ((1, 0), (x, y + cell, x + cell, y + cell)),
+                                   ((0, -1), (x, y, x, y + cell)),
+                                   ((0, 1), (x + cell, y, x + cell, y + cell))):
+                if (row + dr, col + dc) not in cells:
+                    self._canvas.create_line(*line, fill=color, width=edge,
+                                             capstyle="projecting", tags=self._tags())
+        x, y = (aoe.col - 1) * cell, (aoe.row - 1) * cell
+        if not aoe.corner:
+            x, y = x + cell / 2, y + cell / 2
+        r = max(3.0, cell * 0.1)
+        self._canvas.create_oval(x - r, y - r, x + r, y + r, fill=color,
+                                 outline="black", width=2, tags=self._tags())
+        if label:
+            self.text(x + r + 4, y - self._mirror.font.metrics("linespace") / 2,
+                      label, color)
+
     def ghost(self, file: str, rotation: float, area: CellArea) -> None:
         """A see-through sprite fitted in the area, as the battlemap would draw
         it. Images are cached per size until the mode ends."""
@@ -309,3 +348,25 @@ class MirrorInput:
             self._images.append(photo)
             self._canvas.create_image(x + w / 2, y + h / 2, image=photo,
                                       anchor="center", tags=self._tags())
+
+
+def cells_overlay(cells: set[tuple[int, int]], cell: float, color: str,
+                  alpha: int) -> tuple[Image.Image, float, float]:
+    """A see-through image covering just these cells (``color`` at ``alpha``)
+    and where its top-left goes on the canvas. Sized to the cells' bounding
+    box, so a preview never needs a canvas-sized image."""
+    top = min(r for r, _ in cells)
+    left = min(c for _, c in cells)
+    rows = max(r for r, _ in cells) - top + 1
+    cols = max(c for _, c in cells) - left + 1
+    x0, y0 = (left - 1) * cell, (top - 1) * cell
+    image = Image.new("RGBA", (max(1, math.ceil(cols * cell)),
+                               max(1, math.ceil(rows * cell))), (0, 0, 0, 0))
+    fill = Image.new("RGBA", (1, 1), (*ImageColor.getrgb(color)[:3], alpha))
+    for row, col in cells:
+        # Rounded edges, as the fog: neighbouring cells meet without a gap.
+        x = round((col - 1) * cell - x0)
+        y = round((row - 1) * cell - y0)
+        size = (round(col * cell - x0) - x, round(row * cell - y0) - y)
+        image.paste(fill.resize(size), (x, y))
+    return image, x0, y0

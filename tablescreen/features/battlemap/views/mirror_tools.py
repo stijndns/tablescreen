@@ -12,8 +12,9 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Callable, Optional
 
+from ..model.aoe import AoE
 from ..model.battlemap_state import Sprite, sprite_at
-from ..model.grid import CellArea, area_label, cell_label
+from ..model.grid import CellArea, area_label, cell_label, pick_origin
 
 if TYPE_CHECKING:
     from .mirror_input import MirrorInput
@@ -408,3 +409,60 @@ class SpriteResizeTool(SpritePickTool):
         self.ctx.clear()
         self.ctx.outline(self._held.area, width=1)
         self.ctx.label_at(self._held.area, self._held.name)
+
+
+def origin_text(row: int, col: int, corner: bool, style: str) -> str:
+    """``E8`` or, for a corner, ``E8c`` (the form `map aoe` takes)."""
+    return cell_label(row, col, style) + ("c" if corner else "")
+
+
+class AoePlaceTool(MirrorTool):
+    """A preview of the area follows the pointer; a click places it. Spheres
+    take a grid corner when the pointer is near one, else the cell centre;
+    cubes always the nearest corner (their top-left)."""
+
+    def __init__(self, shape: str, size_ft: int, name: Optional[str] = None):
+        super().__init__()
+        self.shape, self.size_ft, self.name = shape, size_ft, name
+        self.once = name is not None
+        what = name or f"a {size_ft} ft {shape}"
+        self.label = f"placing {what}"
+        self.hint = (f"move the preview of {what} and click to place it"
+                     + ("; near a grid corner the corner is the centre."
+                        if shape == "sphere" else
+                        "; it starts at the nearest grid corner (its top-left).")
+                     + ("" if self.once else " Each click adds one."))
+        self._shown: Optional[tuple[int, int, bool]] = None
+
+    def _origin(self, pos: Pos) -> Optional[tuple[int, int, bool]]:
+        cell = self.ctx.cell
+        if not cell:
+            return None
+        return pick_origin(*pos, cell, "both" if self.shape == "sphere" else "corner")
+
+    def hover(self, pos: Pos) -> None:
+        origin = self._origin(pos)
+        if origin is None or origin == self._shown:
+            return
+        self._shown = origin
+        ctx = self.ctx
+        ctx.clear()
+        ctx.aoe_preview(AoE("preview", self.shape, *origin, self.size_ft),
+                        label=f"{self.size_ft} ft {self.shape} "
+                              f"{origin_text(*origin, ctx.style)}")
+
+    def drag(self, pos: Pos) -> None:
+        self.hover(pos)                 # the button held down: still follows
+
+    def leave(self) -> None:
+        self._shown = None
+        super().leave()
+
+    def release(self, pos: Pos, click: bool) -> None:
+        origin = self._origin(pos)
+        if origin is None:
+            print("[i] Mirror: the cell size isn't known yet; nothing changed.")
+            return
+        line = (f"map aoe {self.shape} {origin_text(*origin, self.ctx.style)} "
+                f"{self.size_ft}")
+        self.ctx.submit(f"{line} as {self.name}" if self.name else line)

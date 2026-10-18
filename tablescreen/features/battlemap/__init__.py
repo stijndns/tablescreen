@@ -29,8 +29,9 @@ from .video import VIDEO_EXTENSIONS
 from .views.battlemap_view import BackdropCache, BattleMapView
 from .views.mirror import MirrorView
 from .views.mirror_input import MirrorInput
-from .views.mirror_tools import (AreaTool, SpriteMoveTool, SpriteRemoveTool,
-                                 SpriteResizeTool, SpriteRotateTool)
+from .views.mirror_tools import (AoePlaceTool, AreaTool, SpriteMoveTool,
+                                 SpriteRemoveTool, SpriteResizeTool,
+                                 SpriteRotateTool)
 
 CURRENT_OS = platform.system()
 
@@ -123,6 +124,12 @@ DM mirror (a scaled copy of the battlemap in its own window; one at most):
                                       clockwise), click to apply
     map mirror sprite resize        — click a sprite, then drag its new
                                       footprint
+    map mirror aoe sphere <radius> [as <name>]
+    map mirror aoe cube <size> [as <name>]
+                                    — a preview follows the mouse, a click
+                                      places it; a sphere takes a grid corner
+                                      when the mouse is near one; with a name
+                                      one area, without one as many as clicked
 """
 
 
@@ -386,6 +393,8 @@ class BattleMapFeature(FeatureBase):
         words = [w.lower() for w in rest] or ["status"]
         if words[:2] == ["sprite", "add"]:
             self._cmd_mirror_sprite_add(rest[2:])      # file names keep their case
+        elif words[:2] in (["aoe", "sphere"], ["aoe", "cube"]):
+            self._cmd_mirror_aoe_place(words[1], rest[2:])
         elif words[0] == "sprite" and words[1:2] in (["remove"], ["move"], ["rotate"],
                                                       ["resize"]):
             self._cmd_mirror_sprite_tool(words[1], words[2:])
@@ -401,7 +410,30 @@ class BattleMapFeature(FeatureBase):
             print("Usage: map mirror [show | remove | grid on|off | coords on|off "
                   "| fow reveal|hide | sprite add <file> [as <name>] "
                   "| sprite remove | sprite move | sprite rotate [step] "
-                  "| sprite resize]")
+                  "| sprite resize | aoe sphere <radius> [as <name>] "
+                  "| aoe cube <size> [as <name>]]")
+
+    def _cmd_mirror_aoe_place(self, shape: str, args: list[str]) -> None:
+        """Check the size and name as `map aoe` would, before any clicking."""
+        placeholder = "A1" if shape == "sphere" else "A1c"   # the mouse picks it
+        try:
+            fields, name = parse_aoe(shape, [placeholder, *args])
+        except ValueError as exc:
+            message = str(exc)
+            if message.startswith("Usage"):
+                print(f"Usage: map mirror aoe {shape} "
+                      f"<{'radius' if shape == 'sphere' else 'size'}> [as <name>]")
+            else:
+                print(f"[!] {message}")
+            return
+        if name is not None and not SPRITE_NAME.fullmatch(name):
+            print(f"[!] Invalid AoE name '{name}': use letters, digits, '_' and '-' only.")
+            return
+        if name is not None and self.state.find_aoe(name):
+            print(f"[!] An AoE named '{name}' already exists.")
+            return
+        self.services.send(self.name, "mirror",
+                           ("aoe_place", shape, fields["size_ft"], name))
 
     def _cmd_mirror_sprite_tool(self, verb: str, args: list[str]) -> None:
         """remove, move, rotate [step], resize: tools that pick a sprite."""
@@ -632,6 +664,9 @@ class BattleMapFeature(FeatureBase):
                 self._mirror_setting(action, args[0] == "on")
             elif action == "fow":
                 self._mirror_fow_mode(args[0])
+            elif action == "aoe_place":
+                self._mirror_show(announce_open=False)
+                self.mirror_input.start(AoePlaceTool(*args))
             elif action == "sprite_tool":
                 verb, step = args
                 self._mirror_show(announce_open=False)
@@ -875,13 +910,17 @@ class BattleMapFeature(FeatureBase):
             return [s for s in options if s.startswith(text)]
         if sub == "mirror":
             if len(parts) == 2:
-                options = ("show", "remove", "grid", "coords", "fow", "sprite")
+                options = ("show", "remove", "grid", "coords", "fow", "sprite", "aoe")
             elif len(parts) == 3 and parts[2].lower() in ("grid", "coords"):
                 options = ("on", "off")
             elif len(parts) == 3 and parts[2].lower() == "fow":
                 options = ("reveal", "hide")
             elif len(parts) == 3 and parts[2].lower() == "sprite":
                 options = ("add", "remove", "move", "rotate", "resize")
+            elif len(parts) == 3 and parts[2].lower() == "aoe":
+                options = ("sphere", "cube")
+            elif len(parts) == 5 and parts[2].lower() == "aoe":
+                options = ("as",)
             elif len(parts) == 4 and parts[2:4] == ["sprite", "add"]:
                 clean = line.split()[-1] if not line.endswith(" ") else ""
                 return tab_completion(clean, list(Image.registered_extensions()),
