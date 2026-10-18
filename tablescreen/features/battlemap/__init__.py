@@ -137,6 +137,8 @@ DM mirror (a scaled copy of the battlemap in its own window; one at most):
                                       one in that cell)
     map mirror aoe move             — click an area, then click where it goes
                                       (or drag it there)
+  While a sprite or area mode is on, T on the mirror also shows its preview
+  on the battlemap (T again: mirror only).
 """
 
 

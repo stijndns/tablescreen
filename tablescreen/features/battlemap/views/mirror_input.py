@@ -27,11 +27,12 @@ from ....core.paths import IMAGES_DIR
 from ..model.aoe import AoE, aoe_cells
 from ..model.grid import CellArea, area_label, area_to_pixels, drag_area, pixels_to_cell
 from ..sprite_images import ghost_image
-from .battlemap_view import OVERLAY_TAG
+from .battlemap_view import OVERLAY_TAG, PREVIEW_AOE_TAG, PREVIEW_SPRITES_TAG
 from .mirror import MirrorView
 from .mirror_tools import MirrorTool, Pos
 
 PREVIEW_TAG = "mirror_preview"      # with OVERLAY_TAG, which the view keeps on top
+TABLE_PREVIEW_TAG = "table_preview" # with the table view's PREVIEW_*_TAG layers
 PREVIEW_COLOR = "#ffd000"
 PREVIEW_SHADOW = "black"
 GHOST_OPACITY = 0.4                 # sprite previews: see-through
@@ -52,12 +53,20 @@ class MirrorInput:
         self._top = self._canvas.winfo_toplevel()
         self._title = self._top.title()
         self.mode: Optional[MirrorTool] = None
+        self.table_shown = False            # T: public previews on the table too
         self._press: Optional[Pos] = None       # where the button went down
+        self._pointer: Optional[Pos] = None     # last position on the map
         self._armed = False     # the mirror had focus since the mode started
         self._wheel = 0         # delta not yet worth a whole notch
         self._wheel_events = False              # <MouseWheel> seen (Tk 9 on X11)
-        self._images: list[ImageTk.PhotoImage] = []     # previews on screen
-        self._ghosts: dict[tuple, Optional[ImageTk.PhotoImage]] = {}
+        self._mirror_surface = _Surface(self._canvas, lambda: self.cell,
+                                        self.map_size, PREVIEW_TAG)
+        table = mirror.table
+        self._table = _Surface(
+            table.canvas, table.current_cell_px,
+            lambda: (table.canvas.winfo_width(), table.canvas.winfo_height()),
+            TABLE_PREVIEW_TAG)
+        self._table_dirty = False           # drew on the table: restack it
 
         canvas = self._canvas
         canvas.bind("<Motion>", self._on_hover, add="+")
@@ -71,6 +80,8 @@ class MirrorInput:
         canvas.bind("<Button-5>", lambda e: self._on_button_wheel(-WHEEL_NOTCH), add="+")
         # On the toplevel: its bindtag is on every widget inside it.
         self._top.bind("<Escape>", lambda e: self._cancel("Esc"), add="+")
+        for key in ("<KeyPress-t>", "<KeyPress-T>"):
+            self._top.bind(key, lambda e: self._toggle_table(), add="+")
         self._top.bind("<FocusIn>", self._on_focus_in, add="+")
         self._top.bind("<FocusOut>", self._on_focus_out, add="+")
 
@@ -81,12 +92,14 @@ class MirrorInput:
             self.stop(f"now {tool.label}")
         tool.ctx = self
         self.mode = tool
+        self.table_shown = False
         self._press, self._wheel = None, 0
         self._armed = self._has_focus()
         self._canvas.configure(cursor="crosshair")
-        self._top.title(f"{self._title} — {tool.label} (Esc to stop)")
+        self._set_title()
+        table = " T shows the preview on the table too." if tool.public_preview else ""
         print(f"[+] Mirror: {tool.hint} Esc, a right-click or leaving the mirror "
-              f"stops.")
+              f"stops.{table}")
         self.focus()
 
     def stop(self, reason: str) -> None:
@@ -94,8 +107,10 @@ class MirrorInput:
             return
         label, self.mode = self.mode.label, None
         self._press = None
+        self.table_shown = False
         self.clear()
-        self._ghosts.clear()
+        self._mirror_surface.cache.clear()
+        self._table.cache.clear()
         self._canvas.configure(cursor="")
         self._top.title(self._title)
         print(f"[i] Mirror: stopped {label} ({reason}).")
@@ -105,6 +120,24 @@ class MirrorInput:
         self._submit(line)
         if self.mode is not None and self.mode.once:
             self.stop("done")
+
+    def _set_title(self) -> None:
+        shown = ", shown on the table" if self.table_shown else ""
+        self._top.title(f"{self._title} — {self.mode.label}{shown} (Esc to stop)")
+
+    def _toggle_table(self) -> None:
+        """T: show this mode's result previews on the table too, or stop."""
+        tool = self.mode
+        if tool is None or not tool.public_preview:
+            return                      # e.g. fog reveal: the DM's decision
+        self.table_shown = not self.table_shown
+        self._set_title()
+        print("[i] Mirror: the preview is shown on the table too."
+              if self.table_shown else "[i] Mirror: the preview is on the mirror only.")
+        self.clear()
+        if self._pointer is not None:
+            tool.redraw(self._pointer, pressing=self._press is not None)
+        self._restack_table()
 
     def _cancel(self, reason: str) -> None:
         if self.mode is not None and not self.mode.cancel():
@@ -152,22 +185,28 @@ class MirrorInput:
 
     def _on_hover(self, event) -> None:
         if self.mode is not None and self._press is None:
-            self.mode.hover(self._clamp(event.x, event.y))
+            self._pointer = self._clamp(event.x, event.y)
+            self.mode.hover(self._pointer)
+            self._restack_table()
 
     def _on_leave(self, event) -> None:
         if self.mode is not None and self._press is None:
+            self._pointer = None
             self.mode.leave()
 
     def _on_press(self, event) -> None:
         if self.mode is None:
             return
         self._armed = True      # in use, whether or not Windows gave focus
-        self._press = self._clamp(event.x, event.y)
+        self._press = self._pointer = self._clamp(event.x, event.y)
         self.mode.press(self._press)
+        self._restack_table()
 
     def _on_drag(self, event) -> None:
         if self.mode is not None and self._press is not None:
-            self.mode.drag(self._clamp(event.x, event.y))
+            self._pointer = self._clamp(event.x, event.y)
+            self.mode.drag(self._pointer)
+            self._restack_table()
 
     def _on_release(self, event) -> None:
         if self.mode is None or self._press is None:
@@ -175,6 +214,7 @@ class MirrorInput:
         start, self._press = self._press, None
         end = self._clamp(event.x, event.y)
         self.mode.release(end, math.dist(start, end) < CLICK_SLOP_PX)
+        self._restack_table()
 
     def _on_wheel(self, event) -> None:
         self._wheel_events = True
@@ -193,6 +233,7 @@ class MirrorInput:
         if steps:
             self._wheel -= steps * WHEEL_NOTCH
             self.mode.wheel(steps)
+            self._restack_table()
 
     def _clamp(self, x: float, y: float) -> Pos:
         """Keep a pointer that leaves the map on its edge."""
@@ -238,8 +279,14 @@ class MirrorInput:
     # ── For tools: previews (mirror only, never state) ────────────────────
 
     def clear(self) -> None:
-        self._canvas.delete(PREVIEW_TAG)
-        self._images.clear()
+        self._mirror_surface.clear()
+        self._table.clear()
+
+    def _restack_table(self) -> None:
+        """Put new table previews on their layers (sprites under the fog)."""
+        if self._table_dirty:
+            self._table_dirty = False
+            self._mirror.table.restack()
 
     def _tags(self) -> tuple[str, str]:
         return PREVIEW_TAG, OVERLAY_TAG
@@ -275,81 +322,89 @@ class MirrorInput:
             x, y, _, _ = area_to_pixels(area, cell)
             self.text(x + 5, y + 4, text, color)
 
-    def shade(self, area: CellArea) -> None:
+    def shade(self, area: CellArea, public: bool = False) -> None:
         """Dim an area (e.g. the sprite a rotation preview replaces), so a
         ghost drawn over it stands out. Canvas fills can't be transparent;
         images can."""
-        cell = self.cell
-        if not cell:
-            return
-        x, y, w, h = area_to_pixels(area, cell)
-        size = (max(1, round(w)), max(1, round(h)))
-        key = ("shade", size)
-        if key not in self._ghosts:
-            self._ghosts[key] = ImageTk.PhotoImage(
-                Image.new("RGBA", size, (0, 0, 0, SHADE_ALPHA)))
-        photo = self._ghosts[key]
-        self._images.append(photo)
-        self._canvas.create_image(x, y, image=photo, anchor="nw", tags=self._tags())
+        for surface, tags in self._surfaces(public, PREVIEW_SPRITES_TAG):
+            cell = surface.cell()
+            if not cell:
+                continue
+            x, y, w, h = area_to_pixels(area, cell)
+            size = (max(1, round(w)), max(1, round(h)))
+            key = ("shade", size)
+            if key not in surface.cache:
+                surface.cache[key] = ImageTk.PhotoImage(
+                    Image.new("RGBA", size, (0, 0, 0, SHADE_ALPHA)))
+            surface.show_image(surface.cache[key], x, y, "nw", tags)
 
-    def aoe_preview(self, aoe: AoE, color: str = PREVIEW_COLOR,
-                    label: str = "", fill: bool = True) -> None:
+    def aoe_preview(self, aoe: AoE, color: str = PREVIEW_COLOR, label: str = "",
+                    fill: bool = True, public: bool = False) -> None:
         """An area of effect as it would be drawn: its cells filled
         see-through (unless ``fill`` is off, for an outline-only highlight),
         the outline around them and a dot on the origin, with ``label`` beside
-        the dot."""
-        cell = self.cell
-        if not cell:
-            return
-        map_w, map_h = self.map_size()
-        cells = {(r, c) for r, c in aoe_cells(aoe)
-                 if (c - 1) * cell < map_w and (r - 1) * cell < map_h}
-        if cells and fill:
-            image, x0, y0 = cells_overlay(cells, cell, color, AOE_FILL_ALPHA)
-            photo = ImageTk.PhotoImage(image)
-            self._images.append(photo)
-            self._canvas.create_image(x0, y0, image=photo, anchor="nw",
-                                      tags=self._tags())
-        edge = max(2, round(cell / 22))
-        for row, col in cells:
-            x, y = (col - 1) * cell, (row - 1) * cell
-            for (dr, dc), line in (((-1, 0), (x, y, x + cell, y)),
-                                   ((1, 0), (x, y + cell, x + cell, y + cell)),
-                                   ((0, -1), (x, y, x, y + cell)),
-                                   ((0, 1), (x + cell, y, x + cell, y + cell))):
-                if (row + dr, col + dc) not in cells:
-                    self._canvas.create_line(*line, fill=color, width=edge,
-                                             capstyle="projecting", tags=self._tags())
-        x, y = (aoe.col - 1) * cell, (aoe.row - 1) * cell
-        if not aoe.corner:
-            x, y = x + cell / 2, y + cell / 2
-        r = max(3.0, cell * 0.1)
-        self._canvas.create_oval(x - r, y - r, x + r, y + r, fill=color,
-                                 outline="black", width=2, tags=self._tags())
-        if label:
-            self.text(x + r + 4, y - self._mirror.font.metrics("linespace") / 2,
-                      label, color)
+        the dot. On the table (``public``): outline and dot only, since a
+        table-sized see-through fill is re-blended on every video frame."""
+        for surface, tags in self._surfaces(public, PREVIEW_AOE_TAG):
+            cell = surface.cell()
+            if not cell:
+                continue
+            on_table = surface is self._table
+            map_w, map_h = surface.size()
+            cells = {(r, c) for r, c in aoe_cells(aoe)
+                     if (c - 1) * cell < map_w and (r - 1) * cell < map_h}
+            if cells and fill and not on_table:
+                image, x0, y0 = cells_overlay(cells, cell, color, AOE_FILL_ALPHA)
+                surface.show_image(ImageTk.PhotoImage(image), x0, y0, "nw", tags)
+            canvas, edge = surface.canvas, max(2, round(cell / 22))
+            for row, col in cells:
+                x, y = (col - 1) * cell, (row - 1) * cell
+                for (dr, dc), line in (((-1, 0), (x, y, x + cell, y)),
+                                       ((1, 0), (x, y + cell, x + cell, y + cell)),
+                                       ((0, -1), (x, y, x, y + cell)),
+                                       ((0, 1), (x + cell, y, x + cell, y + cell))):
+                    if (row + dr, col + dc) not in cells:
+                        canvas.create_line(*line, fill=color, width=edge,
+                                           capstyle="projecting", tags=tags)
+            x, y = (aoe.col - 1) * cell, (aoe.row - 1) * cell
+            if not aoe.corner:
+                x, y = x + cell / 2, y + cell / 2
+            r = max(3.0, cell * 0.1)
+            canvas.create_oval(x - r, y - r, x + r, y + r, fill=color,
+                               outline="black", width=2, tags=tags)
+            if label and not on_table:
+                self.text(x + r + 4, y - self._mirror.font.metrics("linespace") / 2,
+                          label, color)
 
-    def ghost(self, file: str, rotation: float, area: CellArea) -> None:
+    def ghost(self, file: str, rotation: float, area: CellArea,
+              public: bool = False) -> None:
         """A see-through sprite fitted in the area, as the battlemap would draw
         it. Images are cached per size until the mode ends."""
-        cell = self.cell
-        if not cell:
-            return
-        x, y, w, h = area_to_pixels(area, cell)
-        key = (file, rotation % 360, round(w), round(h))
-        if key not in self._ghosts:
-            try:
-                image = ghost_image(IMAGES_DIR / file, rotation, (w, h), GHOST_OPACITY)
-                self._ghosts[key] = ImageTk.PhotoImage(image)
-            except Exception:
-                self._ghosts[key] = None    # the command reports the problem
-        photo = self._ghosts[key]
-        if photo is not None:
-            self._images.append(photo)
-            self._canvas.create_image(x + w / 2, y + h / 2, image=photo,
-                                      anchor="center", tags=self._tags())
+        for surface, tags in self._surfaces(public, PREVIEW_SPRITES_TAG):
+            cell = surface.cell()
+            if not cell:
+                continue
+            x, y, w, h = area_to_pixels(area, cell)
+            key = (file, rotation % 360, round(w), round(h))
+            if key not in surface.cache:
+                try:
+                    image = ghost_image(IMAGES_DIR / file, rotation, (w, h),
+                                        GHOST_OPACITY)
+                    surface.cache[key] = ImageTk.PhotoImage(image)
+                except Exception:
+                    surface.cache[key] = None   # the command reports the problem
+            if surface.cache[key] is not None:
+                surface.show_image(surface.cache[key], x + w / 2, y + h / 2,
+                                   "center", tags)
 
+    def _surfaces(self, public: bool, table_layer: str) -> list[tuple["_Surface", tuple]]:
+        """Where to draw: the mirror (above everything), plus the table when
+        the drawing is public and T is on (on ``table_layer``)."""
+        targets = [(self._mirror_surface, self._tags())]
+        if public and self.table_shown:
+            targets.append((self._table, (TABLE_PREVIEW_TAG, table_layer)))
+            self._table_dirty = True
+        return targets
 
 def cells_overlay(cells: set[tuple[int, int]], cell: float, color: str,
                   alpha: int) -> tuple[Image.Image, float, float]:
@@ -371,3 +426,22 @@ def cells_overlay(cells: set[tuple[int, int]], cell: float, color: str,
         size = (round(col * cell - x0) - x, round(row * cell - y0) - y)
         image.paste(fill.resize(size), (x, y))
     return image, x0, y0
+
+
+class _Surface:
+    """A canvas previews are drawn on, with its cell size, map size, the
+    images on screen (Tk needs them referenced) and a per-size image cache."""
+
+    def __init__(self, canvas: tk.Canvas, cell: Callable[[], Optional[float]],
+                 size: Callable[[], tuple[int, int]], tag: str):
+        self.canvas, self.cell, self.size, self.tag = canvas, cell, size, tag
+        self.images: list[ImageTk.PhotoImage] = []
+        self.cache: dict[tuple, Optional[ImageTk.PhotoImage]] = {}
+
+    def show_image(self, photo, x: float, y: float, anchor: str, tags: tuple) -> None:
+        self.images.append(photo)
+        self.canvas.create_image(x, y, image=photo, anchor=anchor, tags=tags)
+
+    def clear(self) -> None:
+        self.canvas.delete(self.tag)
+        self.images.clear()

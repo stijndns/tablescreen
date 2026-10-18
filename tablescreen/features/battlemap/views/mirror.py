@@ -145,6 +145,11 @@ class MirrorView:
                                        anchor="e", font=font, fill=color)
 
     @property
+    def table(self) -> BattleMapView:
+        """The table view this mirror copies."""
+        return self._table
+
+    @property
     def font(self) -> tkfont.Font:
         """The rulers' font: readable at any cell size."""
         return self._font

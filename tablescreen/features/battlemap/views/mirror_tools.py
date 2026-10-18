@@ -29,6 +29,7 @@ class MirrorTool:
     label = ""          # "revealing fog": title and messages
     hint = ""           # printed when the mode starts
     once = False        # the mode ends after the first command
+    public_preview = False  # T can show its result preview on the table
 
     def __init__(self) -> None:
         self.ctx: Optional["MirrorInput"] = None
@@ -55,6 +56,13 @@ class MirrorTool:
         (the mode goes on); False ends the mode."""
         return False
 
+    def redraw(self, pos: Pos, pressing: bool) -> None:
+        """Draw the preview again (after T): tools skip redrawing what they
+        already show, so forget that first."""
+        if hasattr(self, "_shown"):
+            self._shown = None
+        (self.drag if pressing else self.hover)(pos)
+
 
 class AreaTool(MirrorTool):
     """Click a cell or drag over cells; the cells become a command. Shows the
@@ -67,6 +75,7 @@ class AreaTool(MirrorTool):
         self.label, self.hint, self.once = label, hint, once
         self._command = command
         self._ghost = ghost
+        self.public_preview = ghost is not None     # fog selections stay private
         self._start: Optional[Pos] = None       # drag start
         self._hovered: Optional[tuple[int, int]] = None
 
@@ -82,6 +91,10 @@ class AreaTool(MirrorTool):
     def leave(self) -> None:
         self._hovered = None
         super().leave()
+
+    def redraw(self, pos: Pos, pressing: bool) -> None:
+        self._hovered = None
+        super().redraw(pos, pressing)
 
     def press(self, pos: Pos) -> None:
         self._start = pos
@@ -110,7 +123,7 @@ class AreaTool(MirrorTool):
 
     def _show(self, area: CellArea, label: bool) -> None:
         if self._ghost:
-            self.ctx.ghost(self._ghost, 0, area)
+            self.ctx.ghost(self._ghost, 0, area, public=True)
         self.ctx.outline(area, width=3 if label else 2)
         if label:
             self.ctx.area_label(area)
@@ -212,6 +225,7 @@ class SpriteMoveTool(SpritePickTool):
 
     label = "moving sprites"
     hint = "click a sprite, then click where it goes (or drag it there)."
+    public_preview = True
 
     def __init__(self) -> None:
         super().__init__()
@@ -282,7 +296,7 @@ class SpriteMoveTool(SpritePickTool):
         self._shown = ("target", target)
         ctx, sprite = self.ctx, self._held
         ctx.clear()
-        ctx.ghost(sprite.file, sprite.rotation, target)
+        ctx.ghost(sprite.file, sprite.rotation, target, public=True)
         ctx.outline(target)
         ctx.label_at(target, f"{sprite.name} → "
                              f"{cell_label(target.top, target.left, ctx.style)}")
@@ -293,6 +307,7 @@ class SpriteRotateTool(SpritePickTool):
     clockwise, ``step`` degrees a notch), click to apply. Esc puts it back."""
 
     label = "rotating sprites"
+    public_preview = True
 
     def __init__(self, step: float = 15) -> None:
         super().__init__()
@@ -321,6 +336,12 @@ class SpriteRotateTool(SpritePickTool):
             return
         self.ctx.submit(f"map sprite rotate {sprite.name} {delta:g}")
 
+    def redraw(self, pos: Pos, pressing: bool) -> None:
+        if self._held is not None:
+            self._show()
+        else:
+            super().redraw(pos, pressing)
+
     def wheel(self, steps: int) -> None:
         if self._held is None:
             return
@@ -331,8 +352,8 @@ class SpriteRotateTool(SpritePickTool):
     def _show(self) -> None:
         ctx, sprite = self.ctx, self._held
         ctx.clear()
-        ctx.shade(sprite.area)          # the unrotated original is right below
-        ctx.ghost(sprite.file, sprite.rotation + self._delta, sprite.area)
+        ctx.shade(sprite.area, public=True)     # the unrotated original is below
+        ctx.ghost(sprite.file, sprite.rotation + self._delta, sprite.area, public=True)
         ctx.outline(sprite.area)
         ctx.label_at(sprite.area, f"{sprite.name} {self._delta:+g}°")
 
@@ -344,6 +365,7 @@ class SpriteResizeTool(SpritePickTool):
 
     label = "resizing sprites"
     hint = "click a sprite, then drag its new footprint (a click: one cell)."
+    public_preview = True
 
     def __init__(self) -> None:
         super().__init__()
@@ -375,7 +397,7 @@ class SpriteResizeTool(SpritePickTool):
         ctx.dashed_rect(self._start, pos)
         area = ctx.selection(self._start, pos)
         if area is not None:
-            ctx.ghost(self._held.file, self._held.rotation, area)
+            ctx.ghost(self._held.file, self._held.rotation, area, public=True)
             ctx.outline(area)
             ctx.area_label(area)
 
@@ -454,6 +476,7 @@ class AoePlaceTool(MirrorTool):
         super().__init__()
         self.shape, self.size_ft, self.name = shape, size_ft, name
         self.once = name is not None
+        self.public_preview = True
         what = name or f"a {size_ft} ft {shape}"
         self.label = f"placing {what}"
         how = {"sphere": "; near a grid corner the corner is the centre.",
@@ -495,7 +518,7 @@ class AoePlaceTool(MirrorTool):
         self._shown = key
         aoe = self._aoe(origin)
         self.ctx.clear()
-        self.ctx.aoe_preview(aoe, label=aoe_caption(aoe, self.ctx.style))
+        self.ctx.aoe_preview(aoe, label=aoe_caption(aoe, self.ctx.style), public=True)
 
     def leave(self) -> None:
         self._shown = self._origin_now = None
@@ -584,6 +607,7 @@ class AoeMoveTool(AoePickTool):
 
     label = "moving areas of effect"
     hint = "click an area of effect, then click where it goes (or drag it there)."
+    public_preview = True
 
     def __init__(self) -> None:
         super().__init__()
@@ -655,6 +679,6 @@ class AoeMoveTool(AoePickTool):
             return
         self._shown = key
         self.ctx.clear()
-        self.ctx.aoe_preview(target, color=self._held.color,
+        self.ctx.aoe_preview(target, color=self._held.color, public=True,
                              label=f"{target.name} → "
                                    f"{origin_text(target.row, target.col, target.corner, self.ctx.style)}")

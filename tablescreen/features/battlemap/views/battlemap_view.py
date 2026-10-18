@@ -41,6 +41,10 @@ MIRROR_FOG_ALPHA = 150  # of 255
 GRID_TAG = "grid"
 COORDS_TAG = "coords"
 OVERLAY_TAG = "overlay"     # drawn by others on top of everything (mirror previews)
+# Previews of mirror input shown on the table: sprite ghosts below the fog
+# (a hidden sprite's ghost must not show through it), AoEs with the AoEs.
+PREVIEW_SPRITES_TAG = "preview_sprites"
+PREVIEW_AOE_TAG = "preview_aoe"
 
 LABEL_SHADOW_COLOR = "black"    # no canvas transparency, so labels get a shadow
 
@@ -237,14 +241,21 @@ class BattleMapView(tk.Frame):
         self._draw_coords(width, height)
 
     def _restack(self) -> None:
-        """Enforce backdrop → sprites → fog → aoe → grid → coords → overlay; new items land on top."""
+        """Enforce backdrop → sprites → (sprite previews) → fog → aoe →
+        (aoe previews) → grid → coords → overlay; new items land on top."""
         self.canvas.tag_lower(BACKDROP_TAG)
         self.canvas.tag_raise(SPRITES_TAG)
+        self.canvas.tag_raise(PREVIEW_SPRITES_TAG)
         self.canvas.tag_raise(FOG_TAG)
         self.canvas.tag_raise(AOE_TAG)
+        self.canvas.tag_raise(PREVIEW_AOE_TAG)
         self.canvas.tag_raise(GRID_TAG)
         self.canvas.tag_raise(COORDS_TAG)
         self.canvas.tag_raise(OVERLAY_TAG)
+
+    def restack(self) -> None:
+        """Re-apply the layer order after drawing on the canvas from outside."""
+        self._restack()
 
     def _draw_backdrop(self, width: int, height: int) -> None:
         key = (self._filename, width, height)
