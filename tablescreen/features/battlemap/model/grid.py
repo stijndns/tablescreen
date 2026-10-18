@@ -139,43 +139,48 @@ def pixels_to_cell(x: float, y: float, cell: float) -> tuple[int, int]:
     return math.floor(y / cell + 1e-9) + 1, math.floor(x / cell + 1e-9) + 1
 
 
-# A drag on the mirror selects a column (row) when at least this share of
-# its width (height) is inside the dragged rectangle: 0.5 = each edge snaps
-# to the nearest grid line.
+# A drag on the mirror selects the cell where it started, plus each further
+# column (row) of which at least this share of the width (height) is inside
+# the dragged rectangle: 0.5 = the far edge snaps to the nearest grid line.
 DRAG_THRESHOLD = 0.5
 
 
-def drag_span(a: float, b: float, cell: float, extent: float,
-              threshold: float = DRAG_THRESHOLD) -> Optional[tuple[int, int]]:
-    """(first, last) cells, 1-based, along one axis that a drag from a to b
-    covers by at least ``threshold`` of their size; None if none. A partial
-    last cell is judged by its visible part (up to ``extent``)."""
+def drag_span(start: float, end: float, cell: float, extent: float,
+              threshold: float = DRAG_THRESHOLD) -> tuple[int, int]:
+    """(first, last) cells, 1-based, that a drag from ``start`` (where the
+    button went down) to ``end`` selects along one axis. The start cell always
+    counts, wherever in it the drag began; cells further towards ``end`` count
+    when at least ``threshold`` of their size is covered. A partial last cell
+    is judged by its visible part (up to ``extent``)."""
     if cell <= 0:
         raise ValueError("cell size must be positive")
-    lo, hi = sorted((a, b))
-    first = last = None
-    for i in range(max(1, math.floor(lo / cell) + 1), math.ceil(hi / cell) + 1):
-        start = cell_to_pixels(row=1, col=i, cell=cell)[0]
-        end = min(start + cell, extent)
-        if end <= start:
-            break
-        covered = min(hi, end) - max(lo, start)
-        if covered >= threshold * (end - start) - 1e-9:
-            first = first or i
-            last = i
-    return (first, last) if first else None
+    first = last = max(1, math.floor(start / cell + 1e-9) + 1)
+
+    def covered(i: int) -> bool:
+        lo = cell_to_pixels(row=1, col=i, cell=cell)[0]
+        hi = min(lo + cell, extent)
+        if hi <= lo:
+            return False
+        inside = min(end, hi) - lo if end > start else hi - max(end, lo)
+        return inside >= threshold * (hi - lo) - 1e-9
+
+    if end > start:
+        while covered(last + 1):
+            last += 1
+    else:
+        while first > 1 and covered(first - 1):
+            first -= 1
+    return first, last
 
 
 def drag_area(start: tuple[float, float], end: tuple[float, float], cell: float,
               size: tuple[float, float],
-              threshold: float = DRAG_THRESHOLD) -> Optional[CellArea]:
-    """The cells a dragged rectangle selects, decided per axis, so the result
-    is always a rectangle of cells (a corner cell needs no more coverage than
-    an edge cell). ``size`` is the canvas (width, height). None if no cell."""
+              threshold: float = DRAG_THRESHOLD) -> CellArea:
+    """The cells a dragged rectangle selects, decided per axis (see
+    drag_span), so the result is always a rectangle of cells that includes
+    the cell where the drag started. ``size`` is the canvas (width, height)."""
     cols = drag_span(start[0], end[0], cell, size[0], threshold)
     rows = drag_span(start[1], end[1], cell, size[1], threshold)
-    if cols is None or rows is None:
-        return None
     return CellArea(rows[0], cols[0], rows[1], cols[1])
 
 

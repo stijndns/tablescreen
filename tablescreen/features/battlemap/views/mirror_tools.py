@@ -102,7 +102,7 @@ class AreaTool(MirrorTool):
         self._start = self._hovered = None
         self.ctx.clear()
         if area is None:
-            print("[i] Mirror: that rectangle covers no cell; nothing changed.")
+            print("[i] Mirror: the cell size isn't known yet; nothing changed.")
             return
         self.ctx.submit(self._command(area))
 
@@ -392,7 +392,7 @@ class SpriteResizeTool(SpritePickTool):
         sprite = self._held
         self._drop()
         if area is None:
-            print("[i] Mirror: that rectangle covers no cell; nothing changed.")
+            print("[i] Mirror: the cell size isn't known yet; nothing changed.")
         elif area == sprite.area:
             print(f"[i] Mirror: {sprite.name} keeps its size.")
         else:
