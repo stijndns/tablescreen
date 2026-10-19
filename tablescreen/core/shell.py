@@ -13,8 +13,10 @@ body — is the source of truth for what exists, which is what lets ``help``
 and tab-completion show exactly the enabled features' commands and nothing
 else.
 
-The shell runs on its own daemon thread. It must never touch a widget
-directly; it sends messages through the bus instead, which delivers them on
+The shell doesn't read input itself: console.py reads the keyboard and
+executor.py runs every command line, from any source, through ``execute()``
+on the executor thread. Command handlers must never touch a widget
+directly; they send messages through the bus instead, which delivers them on
 the mainloop thread.
 """
 
@@ -90,6 +92,13 @@ class Shell(cmd.Cmd):
         setattr(self, f"do_{name}", handler)
         if completer is not None:
             setattr(self, f"complete_{name}", completer)
+
+    def execute(self, line: str) -> bool:
+        """Run one command line the way cmd.Cmd's loop would; True ends the
+        shell. Called on the executor thread, which also catches errors."""
+        line = self.precmd(line)
+        stop = self.onecmd(line)
+        return bool(self.postcmd(stop, line))
 
     def registered_commands(self) -> list[str]:
         return sorted(self._commands)

@@ -8,11 +8,11 @@ The project was previously named AudioWindowCMD. It was renamed once image and a
 
 The application is split into independent features. Each one can be switched on or off in `config.toml`, and a disabled feature is never loaded at all. A session for a system other than D&D 5e, for example, can run without the combat tracker.
 
-| Feature     | Purpose                                                                                                                               | Documentation                                                      |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| audiowindow | Shows images on a window and plays music                                                                                              | [features/audiowindow](tablescreen/features/audiowindow/README.md) |
-| combat      | D&D 5e initiative and hit point tracker with a player-facing screen                                                                   | [features/combat](tablescreen/features/combat/README.md)           |
-| battlemap   | Battlemap backdrop (image or looping video) with a grid calibrated in physical inches, coordinate labels, sprites and areas of effect | [features/battlemap](tablescreen/features/battlemap/README.md)     |
+| Feature     | Purpose                                                                                                                                                                         | Documentation                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| audiowindow | Shows images on a window and plays music                                                                                                                                        | [features/audiowindow](tablescreen/features/audiowindow/README.md) |
+| combat      | D&D 5e initiative and hit point tracker with a player-facing screen                                                                                                             | [features/combat](tablescreen/features/combat/README.md)           |
+| battlemap   | Battlemap backdrop (image or looping video) with a grid calibrated in physical inches, coordinate labels, sprites, areas of effect, fog of war and a mirror for the game master | [features/battlemap](tablescreen/features/battlemap/README.md)     |
 
 How the features fit together, and how to write a new one, is described in [the core documentation](tablescreen/core/README.md).
 
@@ -96,6 +96,7 @@ grid_width = 1
 coords_style = "letters"    # letters (E8) | numbers (5,8)
 coords_location = "sides"   # sides | cells
 # coords_color = "#ffffff"  # defaults to grid_color
+aoe_hatching = true         # hatch lines inside areas of effect (false: outline only)
 
 [windows]
 mainscreen = "800x600"
@@ -104,7 +105,7 @@ battlemap = "1200x900"
 
 - `enabled` lists the features to load. Anything not listed is not imported.
 - Each feature names the window it draws on. Features that share a window take turns: whichever showed something last is visible. That is how the combat screen replaces the image on the main screen, and how an image takes its place again afterwards.
-- `[windows]` sets the default size of each window, in pixels. The `restore` commands return a window to this size.
+- `[windows]` sets the default size of each window, in pixels. The `restore` commands return a window to this size. The battlemap mirror opens at the battlemap's size and has no entry of its own.
 - The battlemap settings are explained in the [battlemap documentation](tablescreen/features/battlemap/README.md#calibration).
 
 Invalid values are reported when the application starts and replaced by their defaults; a typo never stops a feature from loading.

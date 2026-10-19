@@ -6,7 +6,7 @@ handle them on the Tk mainloop thread only, because Tkinter is not thread-safe.
 
 The bus is the boundary between those two worlds:
 
-    shell thread  ──send()──►  Queue  ──drain()──►  consumer  (mainloop thread)
+    executor thread  ──send()──►  Queue  ──drain()──►  consumer  (mainloop thread)
 
 Two independent wake paths get messages out of the queue:
 
@@ -135,9 +135,10 @@ class MessageBus:
         """
         try:
             self._root.event_generate(QUEUE_EVENT, when="tail")
-        except tk.TclError:
-            # The root is gone (app shutting down) or Tk refused the event.
-            # The poll will pick the message up if the app is still alive.
+        except (tk.TclError, RuntimeError):
+            # The root is gone (app shutting down), Tk refused the event, or
+            # (RuntimeError) the main loop isn't running yet. The poll will
+            # pick the message up if the app is still alive.
             pass
 
     # ── Consuming (mainloop thread only) ──────────────────────────────────

@@ -69,6 +69,15 @@ class ShellServices:
     own target, so a feature cannot accidentally consume another's
     messages."""
 
+    execute: Callable[[str, str], None]
+    """Run one of this feature's own commands as if typed:
+    ``execute("map fow reveal B3:D7", source="mirror")``. Queued on the
+    executor (one command at a time, after anything already queued) and
+    echoed as ``[mirror] map fow reveal B3:D7``; returns at once, safe from
+    any thread. For input that doesn't come from the keyboard, such as mouse
+    clicks. Raises ValueError for another feature's command or the source
+    "shell"."""
+
     config: dict[str, Any]
     """This feature's own config section (e.g. which window it draws on).
     Only its own — not the whole config file."""

@@ -70,3 +70,21 @@ def scaled_frames(path: Path, size: tuple[int, int],
                 # Pillow rotates counter-clockwise; multiples of 90 are exact.
                 frame = frame.rotate(-rotation, resample=Image.BICUBIC, expand=True)
             yield frame.resize(size, Image.LANCZOS)
+
+
+def ghost_image(path: Path, rotation: float, box: tuple[float, float],
+                opacity: float) -> Image.Image:
+    """A see-through preview of a sprite: its first frame, rotated and fitted
+    into ``box`` like the battlemap draws it, at ``opacity`` (0-1). Reads only
+    the first frame (read_source walks all of a GIF's frames: ~30 ms for 24 of
+    them, per ghost size) and resizes with BILINEAR: fast enough to keep up
+    with a drag, sharp enough for a preview."""
+    with Image.open(path) as img:
+        frame = img.convert("RGBA")
+    if rotation:
+        # Pillow rotates counter-clockwise; multiples of 90 are exact.
+        frame = frame.rotate(-rotation, resample=Image.BICUBIC, expand=True)
+    frame = frame.resize(fit_size(frame.size, box), Image.BILINEAR)
+    alpha = frame.getchannel("A").point(lambda a: round(a * opacity))
+    frame.putalpha(alpha)
+    return frame

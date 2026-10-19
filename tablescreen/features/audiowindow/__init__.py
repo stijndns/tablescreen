@@ -7,7 +7,7 @@ battlemap, or any other feature.
 
 Threading, which is the thing to preserve when reading this:
 
-  * ``_do_*`` methods run on the SHELL thread. They may touch this feature's
+  * ``_do_*`` methods run on the EXECUTOR thread. They may touch this feature's
     plain state and send bus messages. They must never touch a widget.
   * ``_on_message`` runs on the MAINLOOP thread. Widget work — showing the
     slot, rendering, fullscreen — happens there.
@@ -86,7 +86,7 @@ class AudiowindowFeature(FeatureBase):
     def shutdown(self) -> None:
         self.audio.shutdown()
 
-    # ── Commands (shell thread — state and messages only) ─────────────────
+    # ── Commands (executor thread — state and messages only) ──────────────
 
     def _do_show(self, arg: str) -> None:
         filename = arg.strip()

@@ -171,3 +171,9 @@ def _cone(aoe: AoE, reach: int) -> set:
     return {(aoe.row + d_row * i, aoe.col + d_col * j)
             for i in range(1, reach + 1) for j in range(1, reach + 1)
             if distance_ft(i, j) <= aoe.size_ft}
+
+
+def aoe_at(aoes: tuple[AoE, ...], row: int, col: int) -> Optional[AoE]:
+    """The topmost area of effect covering the cell: the last one drawn.
+    None if no area covers it."""
+    return next((a for a in reversed(aoes) if (row, col) in aoe_cells(a)), None)

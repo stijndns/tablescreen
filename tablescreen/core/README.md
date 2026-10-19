@@ -13,9 +13,11 @@ The architecture rests on two rules, and most design decisions follow from them.
 
 | File | Contents |
 |---|---|
-| `app.py` | Start-up and shutdown. Reads `config.toml`, creates the hidden Tk root, the bus, the window service and the shell, builds each enabled feature, then runs the Tk main loop. Also makes the process DPI-aware on Windows. |
-| `bus.py` | `MessageBus`, the single queue between input threads and the Tk main loop |
-| `shell.py` | `Shell`, a `cmd.Cmd` that starts with no commands and lets features register theirs |
+| `app.py` | Start-up and shutdown. Reads `config.toml`, creates the hidden Tk root, the bus, the window service, the shell, the executor and the console, builds each enabled feature, then runs the Tk main loop. Also makes the process DPI-aware on Windows. |
+| `bus.py` | `MessageBus`, the single queue between the executor and the Tk main loop |
+| `shell.py` | `Shell`, a `cmd.Cmd` that starts with no commands and lets features register theirs; the command registry, help, tab completion and dispatch |
+| `executor.py` | `CommandExecutor`, the one thread that runs commands from every input source |
+| `console.py` | `Console`, which reads the keyboard, and `ask()` for questions asked in the middle of a command |
 | `window.py` | Named windows, content slots, fullscreen, restore and monitor detection |
 | `feature.py` | The `Feature` protocol, `ShellServices` and the optional `FeatureBase` |
 | `paths.py` | Locations of `assets/`, `combatants/` and `logs/`, independent of the working directory |
@@ -23,23 +25,33 @@ The architecture rests on two rules, and most design decisions follow from them.
 
 ## Threading
 
-Tkinter is not thread-safe. Everything that touches a widget has to run on the thread that runs the Tk main loop, which is the main thread. The shell, however, spends nearly all its time waiting for input, so it runs on a separate daemon thread. The two meet in the message bus:
+Tkinter is not thread-safe. Everything that touches a widget has to run on the thread that runs the Tk main loop, which is the main thread. Commands run on a separate daemon thread, the executor, and the two meet in the message bus:
 
 ```
-shell thread  ──send()──►  queue  ──drain()──►  feature's consumer  (main loop thread)
+keyboard (console thread) ───┐
+                             ├─► executor queue ─► executor thread ─send()─► bus ─► feature's consumer
+mouse on a window (main loop)┘   (line, source)    runs the command                 (main loop thread)
 ```
+
+Every input source hands its commands to the executor instead of running them itself. The console thread reads a line from the keyboard, submits it and waits until it has finished before showing the next prompt. A feature can submit one of its own commands with `ShellServices.execute`, for example when the game master clicks on a window. The executor runs the commands one at a time, in the order they arrive, so it is the only thread that ever changes feature state.
 
 The rules that follow from this:
 
-- Command handlers run on the shell thread. They may change the feature's own state and send messages, and must never touch a widget.
+- Command handlers run on the executor thread. They may change the feature's own state and send messages, and must never touch a widget.
 - A feature's bus consumer (`_on_message` by convention) and all view code run on the main loop thread. That is where drawing happens.
-- Anything that blocks on `input()`, such as the combat tracker's prompts, belongs on the shell thread. Blocking the main loop would freeze every window.
+- A question in the middle of a command, such as the combat tracker's prompts, uses `ask()` from `core/console.py`, never `input()`. It blocks the executor until the answer is typed in the console. Blocking the main loop instead would freeze every window.
 - Work that does not involve Tk at all, such as audio playback through pygame, may be done directly from a command handler without a bus round trip.
 - Long-running background work (the battlemap's video decoder) runs on its own daemon thread and hands results to the main loop through a queue. It never touches Tk either.
 
-Because state is changed on the shell thread and read on the main loop thread, features keep shared state in a form that is safe to read at any moment. The battlemap, for instance, stores sprites and areas of effect as tuples of frozen records that are replaced as a whole on every change, never modified in place.
+Because state is changed on the executor thread and read on the main loop thread, features keep shared state in a form that is safe to read at any moment. The battlemap, for instance, stores sprites and areas of effect as tuples of frozen records that are replaced as a whole on every change, never modified in place.
 
 When commands arrive faster than the main loop handles them (pasted or piped input), the main loop may only see the latest state. A message that reports on its own command should therefore carry the values it reports, instead of reading them from the state when it is handled.
+
+### Questions in the middle of a command
+
+`ask(prompt)` shows the prompt in the console and returns the line typed in reply. While a typed command runs, the console thread is waiting for it anyway, so it reads the answer and passes it back; commands from other sources wait in the queue until the question is answered.
+
+If no answer can come, `ask()` raises `NoAnswer` and the executor cancels the command with a message. That happens at the end of input, and when a command that did not come from the keyboard (one submitted with `execute`) asks a question, because nobody is at the keyboard for it. Commands meant for other sources should therefore not ask questions. Before the console is installed, as in tests, `ask()` falls back to `input()`.
 
 ### Why the bus has two wake-up paths
 
@@ -53,7 +65,9 @@ Draining always empties the whole queue, because Tk merges events and there is n
 - A **content slot** is one feature's `tk.Frame` inside a window. A window can hold several slots but shows only one: calling `show()` on a slot hides its siblings. This is how the combat screen and the image viewer share the main screen without knowing about each other.
 - A **view** is owned by a feature and draws the feature's state into a slot. A feature may have several views of the same state; `FeatureBase.views` is a list for that reason.
 
-Closing a window with its close button only hides it; slots and their contents survive. `Window.restore()` brings it back.
+Closing a window with its close button only hides it; slots and their contents survive. `Window.restore()` brings it back. A feature can replace that behaviour for its own window with `Window.on_close(callback)`, and `WindowService.remove_window(name)` destroys a window for good; the owner releases what its content holds (threads, images) first.
+
+`Window.default_geometry` is the size the window was created with (what `restore()` returns to). `Window.initial_geometry` is its size and position (`"WxH+X+Y"`) when it was first mapped, or `None` before that; it can be passed to `get_window(name, geometry)` to open another window in the same place.
 
 `Window.monitor()` returns the monitor containing the centre of the window, or the nearest one. The centre is used rather than the top-left corner because maximised windows on Windows sit a few pixels off-screen.
 
@@ -68,6 +82,7 @@ What a feature receives in `build()`:
 | `windows` | The window service, for windows and slots |
 | `send(target, command, arg=None)` | Puts a message on the bus. Normally the target is the feature itself. |
 | `subscribe(consumer)` | Registers the feature's bus consumer, bound to its own name |
+| `execute(line, source)` | Runs one of the feature's own commands as if it had been typed, e.g. `execute("map fow reveal B3:D7", source="mirror")`. The command is queued on the executor and echoed in the console as `[mirror] map fow reveal B3:D7`; the call returns at once and is safe from any thread. Messages the command sends carry the source. Another feature's command, or the source `shell`, is refused. |
 | `config` | The feature's own section of `config.toml` |
 | `slot(window_name)` | Shortcut for a content slot named after the feature |
 | `window_name(default)` | The window configured for this feature |
@@ -107,7 +122,7 @@ class MyFeature(FeatureBase):
     def snapshot(self):
         return dict(self.state)
 
-    def _do_say(self, arg):         # shell thread: state and messages only
+    def _do_say(self, arg):         # executor thread: state and messages only
         self.state["text"] = arg
         self.services.send(self.name, "update")
 
@@ -131,4 +146,4 @@ Things that have caused problems before:
 
 ## Shutting down
 
-`exit` in the shell sends a message to the application, which then calls every feature's `shutdown()`, destroys the windows and ends the main loop. The shell thread is a daemon on purpose: it is almost always blocked in `input()`, and a non-daemon thread there would keep the process alive after the main loop ended for any other reason.
+`exit` in the shell sends a message to the application, which then calls every feature's `shutdown()`, destroys the windows and ends the main loop. The end of input (Ctrl-D on Linux, Ctrl-Z on Windows, or the end of piped input) counts as `exit`, and so does Ctrl-C: it is handled on the main thread and performs the same clean shutdown instead of ending the program with a traceback. A second Ctrl-C ends the program immediately, in case a shutdown hangs. Whenever the executor stops, it sends that message as well, so the windows never outlive the shell. The console and executor threads are daemons on purpose: the console is almost always blocked in `input()`, and a non-daemon thread there would keep the process alive after the main loop ended for any other reason.

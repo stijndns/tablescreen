@@ -5,22 +5,27 @@ One canvas in tagged layers: backdrop → sprites → fog → aoe → grid → c
 (bottom to top).
 The backdrop is a static image or a streamed video (see animation.py); it is
 expensive, so other layers never force it to redraw. Mainloop thread only.
+A mirror view (see mirror.py) differs in four ways: a video backdrop and
+animated sprites are stills (their first frame), loading is quiet, and fog
+is see-through for the DM.
 """
 
 from __future__ import annotations
 
 import math
 import tkinter as tk
+import weakref
+from pathlib import Path
 from typing import Callable, Optional, Tuple
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 from ..styling import *
 from ..model.aoe import AoE, aoe_cells
 from ..model.grid import (GridSettings, DEFAULT_GRID_COLOR, MIN_CELL_PX, CellArea,
                           area_to_pixels, cell_px, coord_labels, fog_runs,
                           grid_line_positions, label_font_px)
-from ..video import VideoStream, is_video, oversize_warning, probe
+from ..video import VideoStream, first_frame, is_video, oversize_warning, probe
 from ..sprite_images import (SpriteSource, fit_size, read_source, rotated_size,
                              scaled_frames)
 from .animation import AnimationClock, SpriteAnimation, VideoBackdrop
@@ -32,8 +37,15 @@ SPRITES_TAG = "sprites"
 FOG_TAG = "fog"
 AOE_TAG = "aoe"
 FOG_COLOR = "black"     # opaque: Tk canvases have no transparency
+# Mirror fog: an RGBA image (photo images do blend), so the DM sees under it.
+MIRROR_FOG_ALPHA = 150  # of 255
 GRID_TAG = "grid"
 COORDS_TAG = "coords"
+OVERLAY_TAG = "overlay"     # drawn by others on top of everything (mirror previews)
+# Previews of mirror input shown on the table: sprite ghosts below the fog
+# (a hidden sprite's ghost must not show through it), AoEs with the AoEs.
+PREVIEW_SPRITES_TAG = "preview_sprites"
+PREVIEW_AOE_TAG = "preview_aoe"
 
 LABEL_SHADOW_COLOR = "black"    # no canvas transparency, so labels get a shadow
 
@@ -41,11 +53,33 @@ LABEL_SHADOW_COLOR = "black"    # no canvas transparency, so labels get a shadow
 PpiProvider = Callable[[], Optional[float]]
 
 
+class BackdropCache:
+    """Hands every view the same decoded backdrop, so a mirror doesn't hold a
+    second full-resolution copy (~33 MB for 4K). Weak: an image lives only
+    while a view uses it."""
+
+    def __init__(self) -> None:
+        self._images: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+
+    def open(self, path: Path) -> Image.Image:
+        """The decoded image; for a video, its first frame as a still."""
+        image = self._images.get(path)
+        if image is None:
+            image = first_frame(path) if is_video(path.name) else Image.open(path)
+            image.load()
+            self._images[path] = image
+        return image
+
+
 class BattleMapView(tk.Frame):
     """Displays the battlemap backdrop with optional grid and coordinates."""
 
     def __init__(self, parent: tk.Widget, grid_settings: GridSettings,
-                 ppi_provider: PpiProvider):
+                 ppi_provider: PpiProvider, *,
+                 backdrops: Optional[BackdropCache] = None, mirror: bool = False):
+        """mirror: a DM copy of the table view. Shows a video backdrop and
+        animated sprites as stills (their first frame) and loads quietly (the
+        table view reports)."""
         super().__init__(parent, bg=PALETTE["bg"])
         self.canvas = tk.Canvas(self, bg=PALETTE["surface"], bd=0, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
@@ -57,6 +91,8 @@ class BattleMapView(tk.Frame):
         # Rescaling a 4K image costs ~100 MB transiently, so skip it when
         # only another layer (e.g. the grid) changed.
         self._backdrop_key: Optional[tuple] = None
+        self._backdrops = backdrops or BackdropCache()
+        self._mirror = mirror
 
         self._grid_settings = grid_settings
         self._grid_color = self._valid_color(
@@ -68,13 +104,20 @@ class BattleMapView(tk.Frame):
         self._show_grid = False
         self._show_coords = False
         self._coords_location = grid_settings.coords_location
+        self._aoe_hatching = grid_settings.aoe_hatching
         self._grid_scale_pct = 100.0
         self._coords_style = grid_settings.coords_style
+        # Below this, sprites, fog and AoEs aren't drawn per cell. A mirror
+        # sets it to the table's threshold at its scale, so it never shows
+        # less than the table. The grid always uses MIN_CELL_PX (noise).
+        self.min_cell_px = MIN_CELL_PX
 
         self._sprites: tuple = ()           # from the snapshot
         self._aoes: tuple = ()              # from the snapshot
         self._fow_on = False                # from the snapshot
         self._fow_revealed: frozenset = frozenset()
+        self._fog_key: Optional[tuple] = None   # what the mirror's overlay shows
+        self._fog_photo: Optional[ImageTk.PhotoImage] = None
         self._sprite_sources: dict[str, Optional[SpriteSource]] = {}   # None = failed
         # Keyed by (file, rotation, w, h); only keys currently in use.
         self._sprite_frames: dict[tuple, list[ImageTk.PhotoImage]] = {}
@@ -109,20 +152,33 @@ class BattleMapView(tk.Frame):
 
         path = IMAGES_DIR / filename
         if not path.exists():
-            print(f"[!] File not found: {path}")
-            return False
-        if is_video(filename):
+            return self._load_failed(filename, f"File not found: {path}")
+        if is_video(filename) and not self._mirror:
             return self._load_video(path, filename)
         try:
-            original = Image.open(path)
+            original = self._backdrops.open(path)
         except Exception as exc:
-            print(f"[!] Error loading image: {exc}")
-            return False
+            kind = "video still" if is_video(filename) else "image"
+            return self._load_failed(filename, f"Error loading {kind}: {exc}")
         self._stop_video()
         self._original = original
         self._filename = filename
-        print(f"[+] Loaded image: {filename}")
+        if not self._mirror:
+            print(f"[+] Loaded image: {filename}")
         return True
+
+    def _load_failed(self, filename: str, message: str) -> bool:
+        if self._mirror:
+            # No backdrop rather than the old map, and no retry (and repeated
+            # message) on every render.
+            self._stop_video()
+            self._original = None
+            self._filename = filename
+            if is_video(filename):      # the table view plays it: its own path
+                print(f"[!] Mirror: {message}")
+        else:
+            print(f"[!] {message}")
+        return False
 
     def _load_video(self, path, filename: str) -> bool:
         try:
@@ -188,13 +244,21 @@ class BattleMapView(tk.Frame):
         self._draw_coords(width, height)
 
     def _restack(self) -> None:
-        """Enforce backdrop → sprites → fog → aoe → grid → coords; new items land on top."""
+        """Enforce backdrop → sprites → (sprite previews) → fog → aoe →
+        (aoe previews) → grid → coords → overlay; new items land on top."""
         self.canvas.tag_lower(BACKDROP_TAG)
         self.canvas.tag_raise(SPRITES_TAG)
+        self.canvas.tag_raise(PREVIEW_SPRITES_TAG)
         self.canvas.tag_raise(FOG_TAG)
         self.canvas.tag_raise(AOE_TAG)
+        self.canvas.tag_raise(PREVIEW_AOE_TAG)
         self.canvas.tag_raise(GRID_TAG)
         self.canvas.tag_raise(COORDS_TAG)
+        self.canvas.tag_raise(OVERLAY_TAG)
+
+    def restack(self) -> None:
+        """Re-apply the layer order after drawing on the canvas from outside."""
+        self._restack()
 
     def _draw_backdrop(self, width: int, height: int) -> None:
         key = (self._filename, width, height)
@@ -236,7 +300,7 @@ class BattleMapView(tk.Frame):
         items: dict[tuple, list[int]] = {}
         self._sprite_keys = {}              # name → frames key
 
-        for sprite in self._sprites if cell and cell >= MIN_CELL_PX else ():
+        for sprite in self._sprites if cell and cell >= self.min_cell_px else ():
             x, y, box_w, box_h = area_to_pixels(sprite.area, cell)
             if x >= width or y >= height:
                 continue                    # whole footprint off the canvas
@@ -253,7 +317,7 @@ class BattleMapView(tk.Frame):
                 if not loaded:
                     continue
                 frames[key] = loaded
-                if source.animated:
+                if source.animated and not self._mirror:
                     anims[key] = self._sprite_anims.get(key) or SpriteAnimation(
                         self.canvas, frames[key], list(source.durations),
                         start=self._anim_start(sprite.file))
@@ -296,9 +360,16 @@ class BattleMapView(tk.Frame):
 
     def _load_frames(self, file: str, size: tuple[int, int],
                      rotation: float) -> list[ImageTk.PhotoImage]:
+        """Every frame; a mirror only the first: the DM needs what and where,
+        not the animation (as with a video backdrop), and every frame costs
+        memory and a repaint."""
         try:
-            return [ImageTk.PhotoImage(f)
-                    for f in scaled_frames(IMAGES_DIR / file, size, rotation)]
+            frames = scaled_frames(IMAGES_DIR / file, size, rotation)
+            if self._mirror:
+                first = ImageTk.PhotoImage(next(frames))
+                frames.close()
+                return [first]
+            return [ImageTk.PhotoImage(f) for f in frames]
         except Exception as exc:
             print(f"[!] Could not load sprite image {file}: {exc}")
             return []
@@ -307,11 +378,14 @@ class BattleMapView(tk.Frame):
 
     def _draw_fog(self, width: int, height: int) -> None:
         """Opaque cover over every hidden cell, one rectangle per run of a row."""
+        if self._mirror:
+            self._draw_see_through_fog(width, height)
+            return
         self.canvas.delete(FOG_TAG)
         if not self._fow_on:
             return
         cell = self.current_cell_px()
-        if not cell or cell < MIN_CELL_PX:
+        if not cell or cell < self.min_cell_px:
             # Cell size unknown or too small to show reveals: hide everything.
             self.canvas.create_rectangle(0, 0, width, height, fill=FOG_COLOR,
                                          width=0, tags=FOG_TAG)
@@ -323,25 +397,48 @@ class BattleMapView(tk.Frame):
                                              fill=FOG_COLOR, width=0, tags=FOG_TAG)
         self._restack()
 
+    def _draw_see_through_fog(self, width: int, height: int) -> None:
+        """Mirror: one semi-transparent image over the hidden cells, rebuilt
+        only when it would look different (it costs a few ms)."""
+        cell = self.current_cell_px()
+        if not cell or cell < self.min_cell_px:
+            cell = None             # unknown or too small: shade everything
+        key = (width, height, cell, self._fow_revealed) if self._fow_on else None
+        if key == self._fog_key and self.canvas.find_withtag(FOG_TAG):
+            return
+        self._fog_key = key
+        self.canvas.delete(FOG_TAG)
+        self._fog_photo = None
+        if key is None:
+            return
+        self._fog_photo = ImageTk.PhotoImage(
+            fog_overlay(width, height, cell, self._fow_revealed, MIRROR_FOG_ALPHA))
+        self.canvas.create_image(0, 0, image=self._fog_photo, anchor="nw",
+                                 tags=FOG_TAG)
+        self._restack()
+
     # ── Areas of effect ───────────────────────────────────────────────────
 
     def _draw_aoes(self, width: int, height: int) -> None:
         """Hatching (Tk has no transparency) + an outline + an origin dot."""
         self.canvas.delete(AOE_TAG)
         cell = self.current_cell_px()
-        if not cell or cell < MIN_CELL_PX:
+        if not cell or cell < self.min_cell_px:
             return
         spacing = max(4.0, cell / 6)
         hatch_w, edge_w = max(1, round(cell / 44)), max(2, round(cell / 22))
         for aoe in self._aoes:
             cells = aoe_cells(aoe)
-            for row, col in cells:
+            visible = [(r, c) for r, c in cells
+                       if (c - 1) * cell < width and (r - 1) * cell < height]
+            # One line per run across the area, not per cell: a canvas item
+            # costs on every repaint (each 4K video frame), and a 70 ft
+            # sphere had ~4000 per-cell hatch segments.
+            for line in hatch_runs(visible, cell, spacing) if self._aoe_hatching else ():
+                self.canvas.create_line(*line, fill=aoe.color, width=hatch_w,
+                                        tags=AOE_TAG)
+            for row, col in visible:
                 x, y = (col - 1) * cell, (row - 1) * cell
-                if x >= width or y >= height:
-                    continue
-                for line in _hatch(x, y, cell, spacing):
-                    self.canvas.create_line(*line, fill=aoe.color, width=hatch_w,
-                                            tags=AOE_TAG)
                 # Outline: edges whose neighbour isn't in the area.
                 for (dr, dc), edge in (((-1, 0), (x, y, x + cell, y)),
                                        ((1, 0), (x, y + cell, x + cell, y + cell)),
@@ -367,6 +464,34 @@ class BattleMapView(tk.Frame):
     @property
     def show_grid(self) -> bool:
         return self._show_grid
+
+    @property
+    def coords_style(self) -> str:
+        return self._coords_style
+
+    @property
+    def sprites(self) -> tuple:
+        """As of the last render (the state may be newer)."""
+        return self._sprites
+
+    @property
+    def aoes(self) -> tuple:
+        """As of the last render (the state may be newer)."""
+        return self._aoes
+
+    @property
+    def label_color(self) -> str:
+        return self._label_color
+
+    @property
+    def aoe_hatching(self) -> bool:
+        return self._aoe_hatching
+
+    def set_aoe_hatching(self, on: bool) -> None:
+        """Hatch lines inside areas of effect, or outlines only. Redraws only
+        the AoE layer."""
+        self._aoe_hatching = on
+        self._draw_aoes(self.canvas.winfo_width(), self.canvas.winfo_height())
 
     def set_show_grid(self, on: bool) -> None:
         """Show or hide this view's grid. Redraws only the grid layer."""
@@ -450,6 +575,48 @@ class BattleMapView(tk.Frame):
             if x2 > width or y2 > height:
                 self.canvas.delete(shadow, text)
         self._restack()
+
+
+def fog_overlay(width: int, height: int, cell: Optional[float],
+                revealed: frozenset, alpha: int) -> Image.Image:
+    """RGBA image: black at ``alpha`` over hidden cells, clear over revealed
+    ones. ``cell`` None shades everything."""
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    shade = (0, 0, 0, alpha)
+    if cell is None:
+        draw.rectangle((0, 0, width - 1, height - 1), fill=shade)
+        return overlay
+    rows, cols = math.ceil(height / cell), math.ceil(width / cell)
+    for row, first, last in fog_runs(rows, cols, revealed):
+        x, y, w, h = area_to_pixels(CellArea(row, first, row, last), cell)
+        # Rounded edges, inclusive: neighbouring runs meet without a gap.
+        draw.rectangle((round(x), round(y), round(x + w) - 1, round(y + h) - 1),
+                       fill=shade)
+    return overlay
+
+
+def hatch_runs(cells, cell: float, spacing: float) -> list[tuple[float, float, float, float]]:
+    """The '/' hatching of these cells as merged lines (x1, y1, x2, y2): the
+    per-cell segments lie on one canvas-wide family (x + y = k*spacing), so
+    the segments of neighbouring cells on the same line join into one run."""
+    spans: dict[int, list[tuple[float, float]]] = {}     # k → x ranges
+    for row, col in cells:
+        x, y = (col - 1) * cell, (row - 1) * cell
+        for x1, y1, x2, y2 in _hatch(x, y, cell, spacing):
+            spans.setdefault(round((x1 + y1) / spacing), []).append((x2, x1))
+    runs = []
+    for k, parts in spans.items():
+        parts.sort()
+        lo, hi = parts[0]
+        for a, b in parts[1:] + [(math.inf, math.inf)]:   # sentinel closes the last
+            if a <= hi + 1e-6:
+                hi = max(hi, b)
+                continue
+            line = k * spacing                  # y = line - x
+            runs.append((hi, line - hi, lo, line - lo))
+            lo, hi = a, b
+    return runs
 
 
 def _hatch(x: float, y: float, cell: float, spacing: float):

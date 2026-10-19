@@ -5,7 +5,7 @@ Wraps pygame's mixer. Extracted from the command bodies so the commands stay
 thin and the playback state (the user-facing volume) lives in one place.
 
 Audio does not touch Tk, so unlike the display side it needs no bus round
-trip — the shell thread can call these directly.
+trip — command handlers can call these directly.
 """
 
 from __future__ import annotations

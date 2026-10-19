@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import math
 import platform
+import re
+import shlex
 from typing import Optional
 
 from PIL import Image
@@ -16,7 +18,7 @@ from ...core.feature import FeatureBase, ShellServices
 from ...core.paths import IMAGES_DIR
 from .model.aoe import (DIRECTIONS, ORTHOGONAL, SHAPES, AoE, aoe_cells,
                         parse_aoe, parse_shape_origin)
-from .model.battlemap_state import BattleMapState, Sprite
+from .model.battlemap_state import SPRITE_NAME, BattleMapState, Sprite
 from .model.grid import (COORD_LOCATIONS, COORD_STYLES, GridSettings,
                          MAX_SCALE_PCT, MIN_CELL_PX, MIN_LABEL_FONT_PX,
                          MIN_SCALE_PCT, CellArea, area_label, area_to_pixels,
@@ -24,12 +26,19 @@ from .model.grid import (COORD_LOCATIONS, COORD_STYLES, GridSettings,
                          pixels_per_inch)
 from .sprite_images import FRAME_MEMORY_WARN_BYTES
 from .video import VIDEO_EXTENSIONS
-from .views.battlemap_view import BattleMapView
+from .views.battlemap_view import BackdropCache, BattleMapView
+from .views.mirror import MirrorView
+from .views.mirror_input import MirrorInput
+from .views.mirror_tools import (AoeMoveTool, AoePlaceTool, AoeRemoveTool,
+                                 AreaTool, SpriteMoveTool, SpriteRemoveTool,
+                                 SpriteResizeTool, SpriteRotateTool)
 
 CURRENT_OS = platform.system()
 
 # A typo like A1:ZZZ9999 would otherwise create millions of cells.
 MAX_FOW_CELLS = 10_000
+
+MIRROR_WINDOW = "battlemap_mirror"
 
 BATTLEMAP_HELP = """\
 Battlemap commands:
@@ -79,6 +88,8 @@ Areas of effect (sizes in feet, multiples of 5; diagonals count 5-10-5):
     map aoe list                    — all AoEs
     map aoe remove <name>           — remove one
     map aoe clear                   — remove all
+    map aoe hatch [on | off]        — hatch lines inside the areas on the
+                                      battlemap, or outlines only
 
 Fog of war (hides the map, sprites included; areas of effect, grid and
 coordinates stay visible):
@@ -87,6 +98,50 @@ coordinates stay visible):
     map fow reveal <cell|range>     — uncover a cell or range, e.g. B3:D6
     map fow hide <cell|range>       — cover it again
     map fow off                     — remove the fog; reveals are forgotten
+
+DM mirror (a scaled copy of the battlemap in its own window; one at most):
+    map mirror                      — mirror status
+    map mirror show                 — open it where the battlemap window first
+                                      appeared, at its startup size
+    map mirror remove               — close it (its X button does the same)
+    map mirror grid on | off        — the mirror's own grid (starts on)
+    map mirror coords on | off      — rulers with coordinates around the
+                                      mirror's map (start on)
+    map mirror fow reveal | hide    — reveal or hide fog with the mouse on the
+                                      mirror: click a cell or drag over cells;
+                                      Esc, a right-click or leaving the mirror
+                                      stops
+    map mirror sprite add <file> [as <name>]
+                                    — place sprites with the mouse: click a
+                                      cell or drag over a range; with a name
+                                      one sprite, without one as many as
+                                      clicked (sprite1, sprite2, ...)
+    map mirror sprite remove        — click a sprite to remove it (the
+                                      topmost one in that cell)
+    map mirror sprite move          — click a sprite, then click where it
+                                      goes (or drag it there); Esc puts a
+                                      picked-up sprite back
+    map mirror sprite rotate [step] — click a sprite, turn the wheel (step
+                                      degrees a notch, default 15; down =
+                                      clockwise), click to apply
+    map mirror sprite resize        — click a sprite, then drag its new
+                                      footprint
+    map mirror aoe sphere <radius> [as <name>]
+    map mirror aoe cube <size> [as <name>]
+    map mirror aoe cone <length> [as <name>]
+                                    — a preview follows the mouse, a click
+                                      places it; a sphere takes a grid corner
+                                      when the mouse is near one; the wheel
+                                      aims a cone (down = clockwise); with a
+                                      name one area, without one as many as
+                                      clicked
+    map mirror aoe remove           — click an area to remove it (the topmost
+                                      one in that cell)
+    map mirror aoe move             — click an area, then click where it goes
+                                      (or drag it there)
+    map mirror aoe hatch on | off   — hatch lines inside the mirror's areas
+  While a sprite or area mode is on, T on the mirror also shows its preview
+  on the battlemap (T again: mirror only).
 """
 
 
@@ -142,6 +197,10 @@ class BattleMapFeature(FeatureBase):
         self.state = BattleMapState()
         self.slot = None
         self.grid_settings = GridSettings()
+        self.backdrops = BackdropCache()      # decoded once for all views
+        self.mirror: Optional[MirrorView] = None
+        self.mirror_input: Optional[MirrorInput] = None
+        self._calibrated: Optional[tuple[float, str]] = None   # see _calibration
 
     # ── Build ─────────────────────────────────────────────────────────────
 
@@ -156,12 +215,22 @@ class BattleMapFeature(FeatureBase):
         window_name = services.window_name()
         self.slot = services.slot(window_name)
         view = BattleMapView(self.slot.frame, self.grid_settings,
-                             lambda: self._calibration()[0])
+                             lambda: self._calibration()[0],
+                             backdrops=self.backdrops)
         view.pack(fill="both", expand=True)
         self.views.append(view)
+        # The mirror copies this canvas, so it follows its size.
+        view.canvas.bind("<Configure>", lambda e: self._layout_mirror(), add="+")
 
+        # The window's monitor (so its pixels per inch) can only change when
+        # the window moves or resizes: forget the remembered calibration then,
+        # before the redraw below uses it.
+        window = services.windows.get_window(window_name)
+        window.on_geometry_change(self._forget_calibration)
+        window.toplevel.bind("<Configure>", lambda e: self._forget_calibration(),
+                             add="+")
         # Redraw backdrop and grid when the window is resized or fullscreened.
-        services.windows.get_window(window_name).on_geometry_change(view.rescale)
+        window.on_geometry_change(view.rescale)
 
         services.register_command(
             "map", self.do_battlemap, self.complete_battlemap,
@@ -176,7 +245,7 @@ class BattleMapFeature(FeatureBase):
     def snapshot(self) -> dict:
         return self.state.snapshot()
 
-    # ── Commands (shell thread — state and messages only) ─────────────────
+    # ── Commands (executor thread — state and messages only) ──────────────
 
     def do_battlemap(self, arg: str) -> None:
         parts = get_arg_parts(arg)
@@ -211,6 +280,8 @@ class BattleMapFeature(FeatureBase):
             self._cmd_aoe(rest)
         elif sub == "sprite":
             self._cmd_sprite(rest)
+        elif sub == "mirror":
+            self._cmd_mirror(rest)
         else:
             print(f"[!] Unknown map sub-command '{sub}'. Type 'map help'.")
 
@@ -338,6 +409,112 @@ class BattleMapFeature(FeatureBase):
         else:
             print("Usage: map fow [on | off | reveal <cell|range> | hide <cell|range>]")
 
+    def _cmd_mirror(self, rest: list[str]) -> None:
+        words = [w.lower() for w in rest] or ["status"]
+        if words[:2] == ["sprite", "add"]:
+            self._cmd_mirror_sprite_add(rest[2:])      # file names keep their case
+        elif words[:2] == ["aoe", "hatch"]:
+            if words[2:] not in (["on"], ["off"]):
+                print("Usage: map mirror aoe hatch on | off")
+                return
+            self.services.send(self.name, "mirror", ("aoe_hatch", words[2]))
+        elif words[:2] in (["aoe", "sphere"], ["aoe", "cube"], ["aoe", "cone"]):
+            self._cmd_mirror_aoe_place(words[1], rest[2:])
+        elif words in (["aoe", "move"], ["aoe", "remove"]):
+            if not self.state.aoes:
+                print(f"[i] There are no areas of effect to {words[1]}.")
+                return
+            self.services.send(self.name, "mirror", ("aoe_tool", words[1]))
+        elif words[0] == "sprite" and words[1:2] in (["remove"], ["move"], ["rotate"],
+                                                      ["resize"]):
+            self._cmd_mirror_sprite_tool(words[1], words[2:])
+        elif words[0] == "fow" and words[1:] in (["reveal"], ["hide"]):
+            if not self.state.fow_on:       # checked before any clicking
+                print("[!] Fog of war is off. Turn it on with 'map fow on' first.")
+                return
+            self.services.send(self.name, "mirror", tuple(words))
+        elif (words[0] in ("status", "show", "remove") and len(words) == 1
+                or words[0] in ("grid", "coords") and words[1:] in (["on"], ["off"])):
+            self.services.send(self.name, "mirror", tuple(words))  # mainloop
+        else:
+            print("Usage: map mirror [show | remove | grid on|off | coords on|off "
+                  "| fow reveal|hide | sprite add <file> [as <name>] "
+                  "| sprite remove | sprite move | sprite rotate [step] "
+                  "| sprite resize | aoe sphere <radius> [as <name>] "
+                  "| aoe cube <size> [as <name>] | aoe cone <length> [as <name>] "
+                  "| aoe move | aoe remove]")
+
+    def _cmd_mirror_aoe_place(self, shape: str, args: list[str]) -> None:
+        """Check the size and name as `map aoe` would, before any clicking.
+        The mouse picks the origin (and the wheel a cone's direction), so
+        placeholders stand in for them."""
+        size_word = {"sphere": "radius", "cube": "size", "cone": "length"}[shape]
+        usage = f"Usage: map mirror aoe {shape} <{size_word}> [as <name>]"
+        named = len(args) >= 2 and args[-2].lower() == "as"
+        size_args, tail = (args[:-2], args[-2:]) if named else (args, [])
+        if len(size_args) != 1:
+            print(usage)
+            return
+        placeholder = {"sphere": ["A1"], "cube": ["A1c"], "cone": ["A1"]}[shape]
+        direction = ["n"] if shape == "cone" else []
+        try:
+            fields, name = parse_aoe(shape, [*placeholder, *size_args, *direction, *tail])
+        except ValueError as exc:
+            message = str(exc)
+            print(usage if message.startswith("Usage") else f"[!] {message}")
+            return
+        if name is not None and not SPRITE_NAME.fullmatch(name):
+            print(f"[!] Invalid AoE name '{name}': use letters, digits, '_' and '-' only.")
+            return
+        if name is not None and self.state.find_aoe(name):
+            print(f"[!] An AoE named '{name}' already exists.")
+            return
+        self.services.send(self.name, "mirror",
+                           ("aoe_place", shape, fields["size_ft"], name))
+
+    def _cmd_mirror_sprite_tool(self, verb: str, args: list[str]) -> None:
+        """remove, move, rotate [step], resize: tools that pick a sprite."""
+        step = 15.0
+        if verb == "rotate" and len(args) == 1:
+            try:
+                step = float(args[0])
+            except ValueError:
+                step = math.nan
+            if not (math.isfinite(step) and 0 < step < 360):
+                print("Usage: map mirror sprite rotate [step]  "
+                      "(degrees a wheel notch, more than 0 and less than 360)")
+                return
+        elif args:
+            print(f"Usage: map mirror sprite {verb}"
+                  + (" [step]" if verb == "rotate" else ""))
+            return
+        if not self.state.sprites:
+            print(f"[i] There are no sprites to {verb}.")
+            return
+        self.services.send(self.name, "mirror", ("sprite_tool", verb, step))
+
+    def _cmd_mirror_sprite_add(self, args: list[str]) -> None:
+        """Check everything `map sprite add` would, except the cells, before
+        any clicking."""
+        if len(args) == 3 and args[1].lower() == "as":
+            file, name = args[0], args[2]
+        elif len(args) == 1:
+            file, name = args[0], None
+        else:
+            print("Usage: map mirror sprite add <file> [as <name>]")
+            return
+        if not (IMAGES_DIR / file).is_file():
+            print(f"[!] File not found: {IMAGES_DIR / file}")
+            return
+        if name is not None and not SPRITE_NAME.fullmatch(name):
+            print(f"[!] Invalid sprite name '{name}': use letters, digits, "
+                  f"'_' and '-' only.")
+            return
+        if name is not None and self.state.find_sprite(name):
+            print(f"[!] A sprite named '{name}' already exists.")
+            return
+        self.services.send(self.name, "mirror", ("sprite", file, name))
+
     def _cmd_aoe(self, rest: list[str]) -> None:
         action = rest[0].lower() if rest else ""
         args = rest[1:]
@@ -370,9 +547,12 @@ class BattleMapFeature(FeatureBase):
             count = self.state.clear_aoes()
             self.services.send(self.name, "render")
             print(f"[+] Removed {count} area{'s' if count != 1 else ''} of effect.")
+        elif action == "hatch" and [a.lower() for a in args] in ([], ["on"], ["off"]):
+            # Per view, like the grid: the consumer applies it to the table.
+            self.services.send(self.name, "aoe_hatch", args[0].lower() if args else None)
         else:
             print("Usage: map aoe sphere|cube|cone ... | move <name> <origin> | list | "
-                  "remove <name> | clear"
+                  "remove <name> | clear | hatch [on | off]"
                   "  (see 'map help')")
 
     def _aoe_move(self, args: list[str], style: str) -> None:
@@ -506,6 +686,13 @@ class BattleMapFeature(FeatureBase):
             if action in ("on", "off"):
                 view.set_show_grid(action == "on")
             print(self._grid_report(action, view.show_grid, scale))
+        elif message.command == "aoe_hatch":
+            view = self.views[0]
+            if message.arg is not None:
+                view.set_aoe_hatching(message.arg == "on")
+                print(f"[+] AoE hatching on the battlemap {message.arg}.")
+            else:
+                print(f"AoE hatching on the battlemap: {_on_off(view.aoe_hatching)}.")
         elif message.command == "coords":
             action, value, style, scale = message.arg
             # Per-view settings target the primary view, as with the grid.
@@ -518,18 +705,156 @@ class BattleMapFeature(FeatureBase):
             elif action == "location":
                 view.set_coords_location(value)
             print(self._coords_report(action, view, style, scale))
+        elif message.command == "mirror":
+            action, *args = message.arg
+            if action in ("grid", "coords", "aoe_hatch"):
+                self._mirror_setting(action, args[0] == "on")
+            elif action == "fow":
+                self._mirror_fow_mode(args[0])
+            elif action == "aoe_place":
+                self._mirror_show(announce_open=False)
+                self.mirror_input.start(AoePlaceTool(*args))
+            elif action == "aoe_tool":
+                self._mirror_show(announce_open=False)
+                self.mirror_input.start(AoeMoveTool() if args[0] == "move"
+                                        else AoeRemoveTool())
+            elif action == "sprite_tool":
+                verb, step = args
+                self._mirror_show(announce_open=False)
+                self.mirror_input.start(
+                    SpriteRotateTool(step) if verb == "rotate"
+                    else {"remove": SpriteRemoveTool, "move": SpriteMoveTool,
+                          "resize": SpriteResizeTool}[verb]())
+            elif action == "sprite":
+                self._mirror_sprite_mode(*args)
+            else:
+                {"show": self._mirror_show, "remove": self._mirror_remove,
+                 "status": self._mirror_status}[action]()
         elif message.command == "sprite_changed":
             verb, sprite, old_area, style, scale = message.arg
             self.slot.show()
             self.refresh()
             print(self._sprite_report(verb, sprite, old_area, style, scale))
 
+    # ── DM mirror (mainloop thread) ───────────────────────────────────────
+
+    def _mirror_show(self, announce_open: bool = True) -> None:
+        windows = self.services.windows
+        if self.mirror is not None:
+            self.mirror_input.focus()
+            if announce_open:
+                print("[i] The mirror is already open (one at most); "
+                      "brought it to the front.")
+            return
+        table = windows.get_window(self.services.window_name())
+        geometry = table.initial_geometry or table.default_geometry
+        window = windows.get_window(MIRROR_WINDOW, geometry)
+        window.on_close(self._mirror_remove)
+        slot = window.slot(self.name)
+        self.mirror = MirrorView(slot.frame, self.views[0],
+                                 lambda: self._calibration()[0], self.grid_settings,
+                                 self.backdrops, _geometry_size(table.default_geometry))
+        self.views.append(self.mirror)
+        self.mirror_input = MirrorInput(
+            self.mirror, lambda line: self.services.execute(line, "mirror"))
+        slot.show()
+        self.mirror.render(self.snapshot())
+        self.mirror_input.focus()
+        print(f"[+] Mirror opened at {geometry}. "
+              f"Close it with 'map mirror remove' or its X button.")
+
+    def _mirror_remove(self) -> None:
+        if self.mirror is None:
+            print("[i] There is no mirror to remove.")
+            return
+        self.mirror_input.stop("the mirror was closed")
+        self.mirror.close()             # stops background work first
+        self.views.remove(self.mirror)
+        self.mirror = self.mirror_input = None
+        self.services.windows.remove_window(MIRROR_WINDOW)
+        print("[+] Mirror removed.")
+
+    def _mirror_status(self) -> None:
+        if self.mirror is None:
+            print("Mirror: none. Open one with 'map mirror show'.")
+            return
+        top = self.services.windows.get_window(MIRROR_WINDOW).toplevel
+        width, height = self.mirror.map_size()
+        scale = self.mirror.scale
+        cell = self.mirror.view.current_cell_px()
+        print(f"Mirror: window {top.winfo_width()}x{top.winfo_height()}, map "
+              f"{width}x{height}"
+              + (f" ({scale:.2f}x the battlemap)" if scale else "")
+              + (f", cells {cell:.1f} px" if cell else ", cell size unknown")
+              + f"; grid {_on_off(self.mirror.show_grid)}, "
+                f"coords {_on_off(self.mirror.show_rulers)}, "
+                f"AoE hatching {_on_off(self.mirror.view.aoe_hatching)}"
+              + (f"; {self.mirror_input.mode.label}" if self.mirror_input.mode else "")
+              + ".")
+
+    def _mirror_sprite_mode(self, file: str, name: Optional[str]) -> None:
+        """Clicks and drags on the mirror place sprites: one with a name (a
+        name is used once), as many as clicked without one."""
+        self._mirror_show(announce_open=False)
+        if name is not None:
+            label, hint = f"placing {name}", f"click a cell or drag over a range to place {name}."
+        else:
+            label, hint = (f"placing {file}",
+                           f"click a cell or drag over a range to place {file}; "
+                           f"each one adds a sprite.")
+        self.mirror_input.start(AreaTool(
+            label=label, hint=hint, once=name is not None, ghost=file,
+            command=lambda area: sprite_add_command(
+                file, area, self.mirror.view.coords_style, name)))
+
+    def _mirror_fow_mode(self, action: str) -> None:
+        """Clicks and drags on the mirror reveal or hide fog, until the mode
+        ends. Opens the mirror if needed."""
+        self._mirror_show(announce_open=False)
+        self.mirror_input.start(AreaTool(
+            label="revealing fog" if action == "reveal" else "hiding fog",
+            hint=f"click a cell or drag over cells to {action} them.",
+            command=lambda area: (f"map fow {action} "
+                                  f"{area_label(area, self.mirror.view.coords_style)}")))
+
+    def _mirror_setting(self, setting: str, on: bool) -> None:
+        if self.mirror is None:
+            print("[i] There is no mirror. Open one with 'map mirror show'.")
+            return
+        if setting == "grid":
+            self.mirror.set_show_grid(on)
+        elif setting == "aoe_hatch":
+            self.mirror.view.set_aoe_hatching(on)
+        else:
+            self.mirror.set_show_rulers(on)
+        name = "AoE hatching" if setting == "aoe_hatch" else setting
+        print(f"[+] Mirror {name} {_on_off(on)}.")
+
+    def _layout_mirror(self) -> None:
+        if self.mirror is not None:
+            self.mirror.layout()
+
     # ── Grid calibration (mainloop thread — reads Tk geometry) ────────────
 
     def _calibration(self) -> tuple[Optional[float], str]:
         """Pixels per inch and where it came from: config override, else the
         window's monitor, else Tk's screen. Never the window's own size —
-        fullscreen applies asynchronously and a half-applied size is wrong."""
+        fullscreen applies asynchronously and a half-applied size is wrong.
+
+        Remembered until the window moves or resizes: asking the system for
+        the monitors took ~3 ms, and every cell-size lookup (each map layer,
+        each mirror preview, several per mouse move) asked again."""
+        if self._calibrated is None:
+            ppi, source = self._measure_calibration()
+            if ppi is None:
+                return ppi, source          # not mapped yet: ask again next time
+            self._calibrated = (ppi, source)
+        return self._calibrated
+
+    def _forget_calibration(self) -> None:
+        self._calibrated = None
+
+    def _measure_calibration(self) -> tuple[Optional[float], str]:
         settings = self.grid_settings
         if settings.pixels_per_inch is not None:
             return settings.pixels_per_inch, "pixels_per_inch override in config"
@@ -627,7 +952,7 @@ class BattleMapFeature(FeatureBase):
     def complete_battlemap(self, text, line, begidx, endidx) -> list[str]:
         parts = get_arg_parts(line[:begidx])
         top_subs = ["show", "bgclear", "fullscreen", "restore", "grid", "coords",
-                    "sprite", "aoe", "fow"]
+                    "sprite", "aoe", "fow", "mirror"]
 
         if len(parts) == 1:
             return [s for s in top_subs if s.startswith(text)]
@@ -653,11 +978,38 @@ class BattleMapFeature(FeatureBase):
             else:
                 options = ()
             return [s for s in options if s.startswith(text)]
+        if sub == "mirror":
+            if len(parts) == 2:
+                options = ("show", "remove", "grid", "coords", "fow", "sprite", "aoe")
+            elif len(parts) == 3 and parts[2].lower() in ("grid", "coords"):
+                options = ("on", "off")
+            elif len(parts) == 3 and parts[2].lower() == "fow":
+                options = ("reveal", "hide")
+            elif len(parts) == 3 and parts[2].lower() == "sprite":
+                options = ("add", "remove", "move", "rotate", "resize")
+            elif len(parts) == 3 and parts[2].lower() == "aoe":
+                options = ("sphere", "cube", "cone", "move", "remove", "hatch")
+            elif len(parts) == 4 and [p.lower() for p in parts[2:4]] == ["aoe", "hatch"]:
+                options = ("on", "off")
+            elif (len(parts) == 5 and parts[2].lower() == "aoe"
+                  and parts[3].lower() in ("sphere", "cube", "cone")):
+                options = ("as",)
+            elif len(parts) == 4 and parts[2:4] == ["sprite", "add"]:
+                clean = line.split()[-1] if not line.endswith(" ") else ""
+                return tab_completion(clean, list(Image.registered_extensions()),
+                                      CURRENT_OS, "image")
+            elif len(parts) == 5 and parts[2:4] == ["sprite", "add"]:
+                options = ("as",)
+            else:
+                options = ()
+            return [o for o in options if o.startswith(text.lower())]
         if sub == "fow" and len(parts) == 2:
             return [o for o in ("on", "off", "reveal", "hide") if o.startswith(text.lower())]
         if sub == "aoe":
             if len(parts) == 2:
-                options = (*SHAPES, "move", "list", "remove", "clear")
+                options = (*SHAPES, "move", "list", "remove", "clear", "hatch")
+            elif parts[2].lower() == "hatch" and len(parts) == 3:
+                options = ("on", "off")
             elif parts[2].lower() in ("remove", "move") and len(parts) == 3:
                 options = tuple(a.name for a in self.state.aoes)
             elif parts[2].lower() == "cone" and len(parts) == 5:
@@ -686,5 +1038,23 @@ class BattleMapFeature(FeatureBase):
                 return [s.name for s in self.state.sprites
                         if s.name.lower().startswith(text.lower())]
         return []
+
+def sprite_add_command(file: str, area: CellArea, style: str,
+                       name: Optional[str] = None) -> str:
+    """The `map sprite add` line for a mirror click. The file is quoted so
+    it reaches the command unchanged (spaces included)."""
+    line = f"map sprite add {shlex.quote(file)} {area_label(area, style)}"
+    return f"{line} as {name}" if name else line
+
+
+def _on_off(on: bool) -> str:
+    return "on" if on else "off"
+
+
+def _geometry_size(geometry: str) -> tuple[int, int]:
+    """(width, height) from a Tk geometry string like "1200x900+10+20"."""
+    m = re.match(r"(\d+)x(\d+)", geometry)
+    return (int(m[1]), int(m[2])) if m else (800, 600)
+
 
 FEATURE = BattleMapFeature()

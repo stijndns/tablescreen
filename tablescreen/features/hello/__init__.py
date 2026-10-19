@@ -28,7 +28,7 @@ class HelloFeature(FeatureBase):
     def snapshot(self):
         return dict(self.state)
 
-    # shell thread: only touch state + send
+    # executor thread: only touch state + send
     def _do_say(self, arg):
         self.state["text"] = arg.strip() or "(empty)"
         self.services.send(self.name, "update")

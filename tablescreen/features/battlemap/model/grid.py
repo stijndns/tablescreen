@@ -19,6 +19,7 @@ DEFAULT_GRID_COLOR = "#ffffff"
 DEFAULT_GRID_WIDTH = 1
 DEFAULT_COORDS_STYLE = "letters"      # E8 reads easier in commands than 5,8
 DEFAULT_COORDS_LOCATION = "sides"
+DEFAULT_AOE_HATCHING = True           # false: areas of effect as outlines only
 
 # Runtime `map grid resize <percent>` bounds.
 MIN_SCALE_PCT = 10.0
@@ -40,6 +41,7 @@ class GridSettings:
     coords_style: str = DEFAULT_COORDS_STYLE        # runtime value is state
     coords_location: str = DEFAULT_COORDS_LOCATION  # runtime value is per view
     coords_color: Optional[str] = None        # None = same as the grid colour
+    aoe_hatching: bool = DEFAULT_AOE_HATCHING   # runtime value is per view
 
     @property
     def label_color(self) -> str:
@@ -82,6 +84,14 @@ class GridSettings:
                             f"got {value!r}; using {default}.")
             return default
 
+        def flag(key: str, default: bool) -> bool:
+            value = config.get(key, default)
+            if isinstance(value, bool):
+                return value
+            warnings.append(f"{key} must be true or false, got {value!r}; "
+                            f"using {str(default).lower()}.")
+            return default
+
         width = config.get("grid_width", DEFAULT_GRID_WIDTH)
         if isinstance(width, bool) or not isinstance(width, int) or width < 1:
             warnings.append(f"grid_width must be a whole number ≥ 1, got {width!r}; "
@@ -98,6 +108,7 @@ class GridSettings:
             coords_location=choice("coords_location", COORD_LOCATIONS,
                                    DEFAULT_COORDS_LOCATION),
             coords_color=colour("coords_color", None),
+            aoe_hatching=flag("aoe_hatching", DEFAULT_AOE_HATCHING),
         )
         return settings, warnings
 
@@ -127,6 +138,97 @@ def cell_to_pixels(*, row: int, col: int, cell: float) -> tuple[float, float]:
     goes through this. Keyword-only because cells are row first but pixels
     are x first."""
     return (col - 1) * cell, (row - 1) * cell
+
+
+def pixels_to_cell(x: float, y: float, cell: float) -> tuple[int, int]:
+    """The (row, col) containing pixel (x, y); inverse of cell_to_pixels. A
+    pixel on a grid line belongs to the cell right of / below it. Rows or
+    columns < 1 mean the pixel is above or left of the grid."""
+    if cell <= 0:
+        raise ValueError("cell size must be positive")
+    # Tolerance: (col - 1) * cell / cell can land a hair below a whole number.
+    return math.floor(y / cell + 1e-9) + 1, math.floor(x / cell + 1e-9) + 1
+
+
+# A drag on the mirror selects the cell where it started, plus each further
+# column (row) of which at least this share of the width (height) is inside
+# the dragged rectangle: 0.5 = the far edge snaps to the nearest grid line.
+DRAG_THRESHOLD = 0.5
+
+
+def drag_span(start: float, end: float, cell: float, extent: float,
+              threshold: float = DRAG_THRESHOLD) -> tuple[int, int]:
+    """(first, last) cells, 1-based, that a drag from ``start`` (where the
+    button went down) to ``end`` selects along one axis. The start cell always
+    counts, wherever in it the drag began; cells further towards ``end`` count
+    when at least ``threshold`` of their size is covered. A partial last cell
+    is judged by its visible part (up to ``extent``)."""
+    if cell <= 0:
+        raise ValueError("cell size must be positive")
+    first = last = max(1, math.floor(start / cell + 1e-9) + 1)
+
+    def covered(i: int) -> bool:
+        lo = cell_to_pixels(row=1, col=i, cell=cell)[0]
+        hi = min(lo + cell, extent)
+        if hi <= lo:
+            return False
+        inside = min(end, hi) - lo if end > start else hi - max(end, lo)
+        return inside >= threshold * (hi - lo) - 1e-9
+
+    if end > start:
+        while covered(last + 1):
+            last += 1
+    else:
+        while first > 1 and covered(first - 1):
+            first -= 1
+    return first, last
+
+
+def drag_area(start: tuple[float, float], end: tuple[float, float], cell: float,
+              size: tuple[float, float],
+              threshold: float = DRAG_THRESHOLD) -> CellArea:
+    """The cells a dragged rectangle selects, decided per axis (see
+    drag_span), so the result is always a rectangle of cells that includes
+    the cell where the drag started. ``size`` is the canvas (width, height)."""
+    cols = drag_span(start[0], end[0], cell, size[0], threshold)
+    rows = drag_span(start[1], end[1], cell, size[1], threshold)
+    return CellArea(rows[0], cols[0], rows[1], cols[1])
+
+
+# A pointer this close to a grid intersection (as a share of a cell) means
+# that corner as an AoE origin (``E8c``) rather than the cell's centre.
+CORNER_SNAP = 0.25
+
+
+def pick_origin(x: float, y: float, cell: float,
+                allow: str = "both") -> tuple[int, int, bool]:
+    """The AoE origin a pointer at pixel (x, y) means, as (row, col, corner).
+    ``allow``: "both" (sphere) = the nearest grid intersection when within
+    CORNER_SNAP of a cell, else the cell centre; "corner" (cube) = always the
+    nearest intersection; "cell" (cone) = always the cell. A corner is named
+    after the cell whose top-left it is, like ``E8c``."""
+    if cell <= 0:
+        raise ValueError("cell size must be positive")
+    if allow != "cell":
+        # Half up, not round()'s half to even: a cell's dead centre always
+        # gives its bottom-right corner, on both axes alike.
+        line_col, line_row = math.floor(x / cell + 0.5), math.floor(y / cell + 0.5)
+        near = math.hypot(x - line_col * cell, y - line_row * cell) <= CORNER_SNAP * cell
+        if allow == "corner" or near:
+            return line_row + 1, line_col + 1, True
+    row, col = pixels_to_cell(x, y, cell)
+    return row, col, False
+
+
+def letterbox(content: tuple[int, int], box: tuple[int, int]) -> tuple[float, int, int]:
+    """Largest uniform scale at which ``content`` (width, height) fits in
+    ``box``, and the scaled size: (scale, width, height). The rest of the box
+    is bars."""
+    (cw, ch), (bw, bh) = content, box
+    if min(cw, ch, bw, bh) <= 0:
+        raise ValueError("sizes must be positive")
+    scale = min(bw / cw, bh / ch)
+    return scale, min(bw, round(cw * scale)), min(bh, round(ch * scale))
 
 
 def grid_line_positions(extent_px: float, cell: float) -> list[float]:
@@ -274,6 +376,30 @@ def fog_runs(rows: int, cols: int,
                 runs.append((row, start, col - 1))
                 start = None
     return runs
+
+
+# Mirror rulers: label every n-th cell when one cell is too small for a label.
+RULER_STEPS = (1, 2, 5, 10, 20, 50, 100)
+
+
+def ruler_step(cell: float, needed_px: float) -> Optional[int]:
+    """Smallest step whose spacing (step × cell) fits a label needing
+    ``needed_px``; None if not even the largest step does."""
+    return next((step for step in RULER_STEPS if step * cell >= needed_px), None)
+
+
+def ruler_marks(extent_px: float, cell: float, step: int) -> list[tuple[int, float]]:
+    """(index, centre offset) of the labelled cells along one edge: every
+    cell for step 1, else every step-th (step, 2·step, ...). Only cells whose
+    centre is within ``extent_px``."""
+    if cell <= 0:
+        raise ValueError("cell size must be positive")
+    marks = []
+    for i in range(1, math.ceil(extent_px / cell) + 1):
+        centre = cell_to_pixels(row=1, col=i, cell=cell)[0] + cell / 2
+        if centre < extent_px and (step == 1 or i % step == 0):
+            marks.append((i, centre))
+    return marks
 
 
 def label_font_px(cell: float, location: str) -> Optional[int]:
