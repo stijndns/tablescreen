@@ -250,12 +250,16 @@ A mode stays on until it is left, so several cells, sprites or areas can be hand
 
 A mode command opens the mirror if it is not open yet. Everything that can be checked before the mouse is used is checked straight away: `map mirror fow reveal` is refused while the fog is off; sprite and area commands report a missing file, a size that is not a multiple of 5, an invalid rotation step, or a name that is invalid or already taken; and the commands that pick a sprite or an area are refused when there is none.
 
-**Previews.** The mirror shows what a click will do before it happens; previews are drawn on the mirror only, never on the table screen.
+**Previews.** The mirror shows what a click will do before it happens. Previews are drawn on the mirror; the T key can show some of them on the table screen as well (see below).
 
 - Cells: the cell under the pointer is outlined, and while dragging the mirror outlines the cells that will be selected and shows their range.
 - Sprites: a see-through copy of the sprite shows where it will be drawn, fitted into its cells exactly as on the map, also while moving, rotating or resizing. A rotation preview darkens the original underneath, so the turned copy stands out.
 - Areas of effect: a see-through preview of the affected cells follows the pointer, with the origin dot and a label such as `20 ft sphere H15c`. A new area is previewed in yellow, since its colour is only chosen when it is created; a moved area keeps its own colour.
 - Picking: before a click, the sprite or area it would pick is outlined with its name, in red when the mode removes it.
+
+**Showing a preview on the table.** While a mode that places, moves, rotates or resizes a sprite or an area of effect is on, pressing T on the mirror also shows its preview on the table screen, for example to let the players see where a fireball would land before it is placed. Pressing T again shows it on the mirror only. The console mentions T when such a mode starts, the mirror's title says when the preview is shown on the table, and it is off again whenever a mode starts.
+
+The table shows only the result: the see-through sprite where it will be drawn, or the outline and origin dot of the area, without a fill or labels. Highlights of what a click would pick or remove, the hovered cell and all labels stay on the mirror. T does nothing in the fog modes, so what is about to be revealed remains the game master's decision. Sprite previews on the table respect the fog of war: like the sprites themselves, they are drawn below it, so moving a hidden sprite does not give it away. The table preview disappears when the mouse leaves the mirror's map and when the mode ends.
 
 **Selecting cells.** The cell where the mouse button is pressed always counts, wherever in it the drag starts. From there, a drag adds each further column of which at least half the width lies inside the dragged rectangle, and each further row of which at least half the height does, so the far edge snaps to the nearest grid line. The result is always a rectangle of cells, the same kind of range as `B2:E8`. A drag that leaves the map stops at its edge, and a short drag inside one cell selects just that cell.
 
@@ -322,7 +326,7 @@ A mode command opens the mirror if it is not open yet. Everything that can be ch
 
 ## How it is drawn
 
-Everything is drawn on a single Tk canvas in layers, from bottom to top: backdrop, sprites, fog of war, areas of effect, grid, coordinate labels. Grid lines and labels therefore stay visible on top of everything, areas are drawn over sprites and fog, and the fog hides the backdrop and sprites. On the mirror, the previews of mouse input are drawn on one more layer above all of these, which stays on top when the map underneath is redrawn.
+Everything is drawn on a single Tk canvas in layers, from bottom to top: backdrop, sprites, fog of war, areas of effect, grid, coordinate labels. Grid lines and labels therefore stay visible on top of everything, areas are drawn over sprites and fog, and the fog hides the backdrop and sprites. On the mirror, the previews of mouse input are drawn on one more layer above all of these, which stays on top when the map underneath is redrawn. Previews shown on the table with T sit with what they preview instead: sprite previews just above the sprites and below the fog, area previews just above the areas of effect.
 
 Only the backdrop is expensive to redraw: scaling a 4K image takes noticeable time and memory. Changes to the other layers never cause the backdrop to be redrawn, and a video backdrop reuses one image for every frame.
 
