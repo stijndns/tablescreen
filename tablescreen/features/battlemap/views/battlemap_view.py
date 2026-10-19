@@ -428,13 +428,16 @@ class BattleMapView(tk.Frame):
         hatch_w, edge_w = max(1, round(cell / 44)), max(2, round(cell / 22))
         for aoe in self._aoes:
             cells = aoe_cells(aoe)
-            for row, col in cells:
+            visible = [(r, c) for r, c in cells
+                       if (c - 1) * cell < width and (r - 1) * cell < height]
+            # One line per run across the area, not per cell: a canvas item
+            # costs on every repaint (each 4K video frame), and a 70 ft
+            # sphere had ~4000 per-cell hatch segments.
+            for line in hatch_runs(visible, cell, spacing):
+                self.canvas.create_line(*line, fill=aoe.color, width=hatch_w,
+                                        tags=AOE_TAG)
+            for row, col in visible:
                 x, y = (col - 1) * cell, (row - 1) * cell
-                if x >= width or y >= height:
-                    continue
-                for line in _hatch(x, y, cell, spacing):
-                    self.canvas.create_line(*line, fill=aoe.color, width=hatch_w,
-                                            tags=AOE_TAG)
                 # Outline: edges whose neighbour isn't in the area.
                 for (dr, dc), edge in (((-1, 0), (x, y, x + cell, y)),
                                        ((1, 0), (x, y + cell, x + cell, y + cell)),
@@ -580,6 +583,29 @@ def fog_overlay(width: int, height: int, cell: Optional[float],
         draw.rectangle((round(x), round(y), round(x + w) - 1, round(y + h) - 1),
                        fill=shade)
     return overlay
+
+
+def hatch_runs(cells, cell: float, spacing: float) -> list[tuple[float, float, float, float]]:
+    """The '/' hatching of these cells as merged lines (x1, y1, x2, y2): the
+    per-cell segments lie on one canvas-wide family (x + y = k*spacing), so
+    the segments of neighbouring cells on the same line join into one run."""
+    spans: dict[int, list[tuple[float, float]]] = {}     # k → x ranges
+    for row, col in cells:
+        x, y = (col - 1) * cell, (row - 1) * cell
+        for x1, y1, x2, y2 in _hatch(x, y, cell, spacing):
+            spans.setdefault(round((x1 + y1) / spacing), []).append((x2, x1))
+    runs = []
+    for k, parts in spans.items():
+        parts.sort()
+        lo, hi = parts[0]
+        for a, b in parts[1:] + [(math.inf, math.inf)]:   # sentinel closes the last
+            if a <= hi + 1e-6:
+                hi = max(hi, b)
+                continue
+            line = k * spacing                  # y = line - x
+            runs.append((hi, line - hi, lo, line - lo))
+            lo, hi = a, b
+    return runs
 
 
 def _hatch(x: float, y: float, cell: float, spacing: float):

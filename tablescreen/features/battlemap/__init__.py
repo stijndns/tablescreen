@@ -197,6 +197,7 @@ class BattleMapFeature(FeatureBase):
         self.backdrops = BackdropCache()      # decoded once for all views
         self.mirror: Optional[MirrorView] = None
         self.mirror_input: Optional[MirrorInput] = None
+        self._calibrated: Optional[tuple[float, str]] = None   # see _calibration
 
     # ── Build ─────────────────────────────────────────────────────────────
 
@@ -218,8 +219,15 @@ class BattleMapFeature(FeatureBase):
         # The mirror copies this canvas, so it follows its size.
         view.canvas.bind("<Configure>", lambda e: self._layout_mirror(), add="+")
 
+        # The window's monitor (so its pixels per inch) can only change when
+        # the window moves or resizes: forget the remembered calibration then,
+        # before the redraw below uses it.
+        window = services.windows.get_window(window_name)
+        window.on_geometry_change(self._forget_calibration)
+        window.toplevel.bind("<Configure>", lambda e: self._forget_calibration(),
+                             add="+")
         # Redraw backdrop and grid when the window is resized or fullscreened.
-        services.windows.get_window(window_name).on_geometry_change(view.rescale)
+        window.on_geometry_change(view.rescale)
 
         services.register_command(
             "map", self.do_battlemap, self.complete_battlemap,
@@ -809,7 +817,22 @@ class BattleMapFeature(FeatureBase):
     def _calibration(self) -> tuple[Optional[float], str]:
         """Pixels per inch and where it came from: config override, else the
         window's monitor, else Tk's screen. Never the window's own size —
-        fullscreen applies asynchronously and a half-applied size is wrong."""
+        fullscreen applies asynchronously and a half-applied size is wrong.
+
+        Remembered until the window moves or resizes: asking the system for
+        the monitors took ~3 ms, and every cell-size lookup (each map layer,
+        each mirror preview, several per mouse move) asked again."""
+        if self._calibrated is None:
+            ppi, source = self._measure_calibration()
+            if ppi is None:
+                return ppi, source          # not mapped yet: ask again next time
+            self._calibrated = (ppi, source)
+        return self._calibrated
+
+    def _forget_calibration(self) -> None:
+        self._calibrated = None
+
+    def _measure_calibration(self) -> tuple[Optional[float], str]:
         settings = self.grid_settings
         if settings.pixels_per_inch is not None:
             return settings.pixels_per_inch, "pixels_per_inch override in config"
