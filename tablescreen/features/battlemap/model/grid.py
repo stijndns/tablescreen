@@ -19,6 +19,7 @@ DEFAULT_GRID_COLOR = "#ffffff"
 DEFAULT_GRID_WIDTH = 1
 DEFAULT_COORDS_STYLE = "letters"      # E8 reads easier in commands than 5,8
 DEFAULT_COORDS_LOCATION = "sides"
+DEFAULT_AOE_HATCHING = True           # false: areas of effect as outlines only
 
 # Runtime `map grid resize <percent>` bounds.
 MIN_SCALE_PCT = 10.0
@@ -40,6 +41,7 @@ class GridSettings:
     coords_style: str = DEFAULT_COORDS_STYLE        # runtime value is state
     coords_location: str = DEFAULT_COORDS_LOCATION  # runtime value is per view
     coords_color: Optional[str] = None        # None = same as the grid colour
+    aoe_hatching: bool = DEFAULT_AOE_HATCHING   # runtime value is per view
 
     @property
     def label_color(self) -> str:
@@ -82,6 +84,14 @@ class GridSettings:
                             f"got {value!r}; using {default}.")
             return default
 
+        def flag(key: str, default: bool) -> bool:
+            value = config.get(key, default)
+            if isinstance(value, bool):
+                return value
+            warnings.append(f"{key} must be true or false, got {value!r}; "
+                            f"using {str(default).lower()}.")
+            return default
+
         width = config.get("grid_width", DEFAULT_GRID_WIDTH)
         if isinstance(width, bool) or not isinstance(width, int) or width < 1:
             warnings.append(f"grid_width must be a whole number ≥ 1, got {width!r}; "
@@ -98,6 +108,7 @@ class GridSettings:
             coords_location=choice("coords_location", COORD_LOCATIONS,
                                    DEFAULT_COORDS_LOCATION),
             coords_color=colour("coords_color", None),
+            aoe_hatching=flag("aoe_hatching", DEFAULT_AOE_HATCHING),
         )
         return settings, warnings
 

@@ -88,6 +88,8 @@ Areas of effect (sizes in feet, multiples of 5; diagonals count 5-10-5):
     map aoe list                    — all AoEs
     map aoe remove <name>           — remove one
     map aoe clear                   — remove all
+    map aoe hatch [on | off]        — hatch lines inside the areas on the
+                                      battlemap, or outlines only
 
 Fog of war (hides the map, sprites included; areas of effect, grid and
 coordinates stay visible):
@@ -137,6 +139,7 @@ DM mirror (a scaled copy of the battlemap in its own window; one at most):
                                       one in that cell)
     map mirror aoe move             — click an area, then click where it goes
                                       (or drag it there)
+    map mirror aoe hatch on | off   — hatch lines inside the mirror's areas
   While a sprite or area mode is on, T on the mirror also shows its preview
   on the battlemap (T again: mirror only).
 """
@@ -410,6 +413,11 @@ class BattleMapFeature(FeatureBase):
         words = [w.lower() for w in rest] or ["status"]
         if words[:2] == ["sprite", "add"]:
             self._cmd_mirror_sprite_add(rest[2:])      # file names keep their case
+        elif words[:2] == ["aoe", "hatch"]:
+            if words[2:] not in (["on"], ["off"]):
+                print("Usage: map mirror aoe hatch on | off")
+                return
+            self.services.send(self.name, "mirror", ("aoe_hatch", words[2]))
         elif words[:2] in (["aoe", "sphere"], ["aoe", "cube"], ["aoe", "cone"]):
             self._cmd_mirror_aoe_place(words[1], rest[2:])
         elif words in (["aoe", "move"], ["aoe", "remove"]):
@@ -539,9 +547,12 @@ class BattleMapFeature(FeatureBase):
             count = self.state.clear_aoes()
             self.services.send(self.name, "render")
             print(f"[+] Removed {count} area{'s' if count != 1 else ''} of effect.")
+        elif action == "hatch" and [a.lower() for a in args] in ([], ["on"], ["off"]):
+            # Per view, like the grid: the consumer applies it to the table.
+            self.services.send(self.name, "aoe_hatch", args[0].lower() if args else None)
         else:
             print("Usage: map aoe sphere|cube|cone ... | move <name> <origin> | list | "
-                  "remove <name> | clear"
+                  "remove <name> | clear | hatch [on | off]"
                   "  (see 'map help')")
 
     def _aoe_move(self, args: list[str], style: str) -> None:
@@ -675,6 +686,13 @@ class BattleMapFeature(FeatureBase):
             if action in ("on", "off"):
                 view.set_show_grid(action == "on")
             print(self._grid_report(action, view.show_grid, scale))
+        elif message.command == "aoe_hatch":
+            view = self.views[0]
+            if message.arg is not None:
+                view.set_aoe_hatching(message.arg == "on")
+                print(f"[+] AoE hatching on the battlemap {message.arg}.")
+            else:
+                print(f"AoE hatching on the battlemap: {_on_off(view.aoe_hatching)}.")
         elif message.command == "coords":
             action, value, style, scale = message.arg
             # Per-view settings target the primary view, as with the grid.
@@ -689,7 +707,7 @@ class BattleMapFeature(FeatureBase):
             print(self._coords_report(action, view, style, scale))
         elif message.command == "mirror":
             action, *args = message.arg
-            if action in ("grid", "coords"):
+            if action in ("grid", "coords", "aoe_hatch"):
                 self._mirror_setting(action, args[0] == "on")
             elif action == "fow":
                 self._mirror_fow_mode(args[0])
@@ -769,7 +787,8 @@ class BattleMapFeature(FeatureBase):
               + (f" ({scale:.2f}x the battlemap)" if scale else "")
               + (f", cells {cell:.1f} px" if cell else ", cell size unknown")
               + f"; grid {_on_off(self.mirror.show_grid)}, "
-                f"coords {_on_off(self.mirror.show_rulers)}"
+                f"coords {_on_off(self.mirror.show_rulers)}, "
+                f"AoE hatching {_on_off(self.mirror.view.aoe_hatching)}"
               + (f"; {self.mirror_input.mode.label}" if self.mirror_input.mode else "")
               + ".")
 
@@ -804,9 +823,12 @@ class BattleMapFeature(FeatureBase):
             return
         if setting == "grid":
             self.mirror.set_show_grid(on)
+        elif setting == "aoe_hatch":
+            self.mirror.view.set_aoe_hatching(on)
         else:
             self.mirror.set_show_rulers(on)
-        print(f"[+] Mirror {setting} {_on_off(on)}.")
+        name = "AoE hatching" if setting == "aoe_hatch" else setting
+        print(f"[+] Mirror {name} {_on_off(on)}.")
 
     def _layout_mirror(self) -> None:
         if self.mirror is not None:
@@ -966,7 +988,9 @@ class BattleMapFeature(FeatureBase):
             elif len(parts) == 3 and parts[2].lower() == "sprite":
                 options = ("add", "remove", "move", "rotate", "resize")
             elif len(parts) == 3 and parts[2].lower() == "aoe":
-                options = ("sphere", "cube", "cone", "move", "remove")
+                options = ("sphere", "cube", "cone", "move", "remove", "hatch")
+            elif len(parts) == 4 and [p.lower() for p in parts[2:4]] == ["aoe", "hatch"]:
+                options = ("on", "off")
             elif (len(parts) == 5 and parts[2].lower() == "aoe"
                   and parts[3].lower() in ("sphere", "cube", "cone")):
                 options = ("as",)
@@ -983,7 +1007,9 @@ class BattleMapFeature(FeatureBase):
             return [o for o in ("on", "off", "reveal", "hide") if o.startswith(text.lower())]
         if sub == "aoe":
             if len(parts) == 2:
-                options = (*SHAPES, "move", "list", "remove", "clear")
+                options = (*SHAPES, "move", "list", "remove", "clear", "hatch")
+            elif parts[2].lower() == "hatch" and len(parts) == 3:
+                options = ("on", "off")
             elif parts[2].lower() in ("remove", "move") and len(parts) == 3:
                 options = tuple(a.name for a in self.state.aoes)
             elif parts[2].lower() == "cone" and len(parts) == 5:

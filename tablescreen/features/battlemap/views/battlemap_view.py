@@ -104,6 +104,7 @@ class BattleMapView(tk.Frame):
         self._show_grid = False
         self._show_coords = False
         self._coords_location = grid_settings.coords_location
+        self._aoe_hatching = grid_settings.aoe_hatching
         self._grid_scale_pct = 100.0
         self._coords_style = grid_settings.coords_style
         # Below this, sprites, fog and AoEs aren't drawn per cell. A mirror
@@ -433,7 +434,7 @@ class BattleMapView(tk.Frame):
             # One line per run across the area, not per cell: a canvas item
             # costs on every repaint (each 4K video frame), and a 70 ft
             # sphere had ~4000 per-cell hatch segments.
-            for line in hatch_runs(visible, cell, spacing):
+            for line in hatch_runs(visible, cell, spacing) if self._aoe_hatching else ():
                 self.canvas.create_line(*line, fill=aoe.color, width=hatch_w,
                                         tags=AOE_TAG)
             for row, col in visible:
@@ -481,6 +482,16 @@ class BattleMapView(tk.Frame):
     @property
     def label_color(self) -> str:
         return self._label_color
+
+    @property
+    def aoe_hatching(self) -> bool:
+        return self._aoe_hatching
+
+    def set_aoe_hatching(self, on: bool) -> None:
+        """Hatch lines inside areas of effect, or outlines only. Redraws only
+        the AoE layer."""
+        self._aoe_hatching = on
+        self._draw_aoes(self.canvas.winfo_width(), self.canvas.winfo_height())
 
     def set_show_grid(self, on: bool) -> None:
         """Show or hide this view's grid. Redraws only the grid layer."""

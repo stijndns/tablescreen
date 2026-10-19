@@ -21,6 +21,7 @@ grid_width = 1
 coords_style = "letters"    # letters (E8) | numbers (5,8)
 coords_location = "sides"   # sides | cells
 # coords_color = "#ffffff"  # defaults to grid_color
+aoe_hatching = true         # hatch lines inside areas of effect (false: outline only)
 ```
 
 A 50" 4K TV works out to about 88.1 pixels per inch, giving a grid of roughly 44 by 25 one-inch cells. `map grid` prints the values in use and where they came from, which makes it easy to check the result with a ruler. If the measured cells are off, `pixels_per_inch` overrides the calculation.
@@ -111,7 +112,7 @@ Sprites stay on the grid when the backdrop changes. `map sprite clear` removes a
 
 ## Areas of effect
 
-Areas of effect are drawn as hatched cells with an outline and a dot at the origin. Each one gets its own colour, so overlapping areas remain distinguishable. All sizes are in feet and must be multiples of 5; one cell is 5 feet. Diagonal distance follows the 5-10-5 rule: the first diagonal step costs 5 feet, the second 10, the third 5, and so on.
+Areas of effect are drawn as hatched cells with an outline and a dot at the origin. Each one gets its own colour, so overlapping areas remain distinguishable. `map aoe hatch off` leaves out the hatch lines on the table screen, so areas are drawn as outlines with their origin dot only; `map aoe hatch on` brings them back, and `map aoe hatch` on its own prints the current setting. The default comes from `aoe_hatching` in the configuration. Hatching costs a little drawing time on every frame of a video backdrop, so turning it off can help with very large areas. All sizes are in feet and must be multiples of 5; one cell is 5 feet. Diagonal distance follows the 5-10-5 rule: the first diagonal step costs 5 feet, the second 10, the third 5, and so on.
 
 Every shape is written in the same order, shape, origin and size, followed by extra arguments for cones:
 
@@ -214,7 +215,7 @@ The mirror is a copy of the table window, not a second calibrated screen. The ta
 
 The mirror differs from the table screen in four ways:
 
-- **Its own grid and coordinates.** `map mirror grid on|off` and `map mirror coords on|off` control the mirror only, and both are on when it opens. `map grid on|off` and `map coords on|off|location` control the table only. The coordinate style (`map coords style`) applies to both.
+- **Its own grid, coordinates and AoE hatching.** `map mirror grid on|off`, `map mirror coords on|off` and `map mirror aoe hatch on|off` control the mirror only; the grid and coordinates are on when it opens, and the hatching follows `aoe_hatching` in the configuration. `map grid on|off`, `map coords on|off|location` and `map aoe hatch on|off` control the table only. The coordinate style (`map coords style`) applies to both.
 - **Rulers instead of labels.** Coordinates are shown as rulers outside the map: column numbers above it and row labels to its left. Their font size is fixed and follows the display scaling, so they stay readable however small the cells are. When a cell is too small for its label, the rulers label every 2nd, 5th, 10th, ... cell.
 - **See-through fog.** Hidden cells are darkened rather than black, so the game master sees what is under the fog, including sprites placed in hidden areas. Tk canvas shapes cannot be transparent, but images can, so the mirror's fog is drawn as one semi-transparent image.
 - **Stills instead of animation.** A `.webm` backdrop is shown as a still image of its first frame, so the video is not decoded a second time, and animated sprites show their first frame too: the mirror is for seeing what is where, and every animation frame would cost memory and repaints.
@@ -304,6 +305,7 @@ The table shows only the result: the see-through sprite where it will be drawn, 
 | `map aoe remove <name>` | Remove one area |
 | `map aoe list` | List all areas |
 | `map aoe clear` | Remove all areas |
+| `map aoe hatch`, `map aoe hatch on` / `off` | Show the setting; hatch lines inside the areas on the table screen, or outlines only |
 | `map fow` | Fog of war status |
 | `map fow on` / `off` | Hide the whole map / remove the fog (and forget reveals) |
 | `map fow reveal <cell or range>` / `hide <cell or range>` | Uncover or cover part of the map |
@@ -312,6 +314,7 @@ The table shows only the result: the see-through sprite where it will be drawn, 
 | `map mirror remove` | Close the mirror (same as its close button) |
 | `map mirror grid on` / `off` | Show or hide the mirror's grid lines |
 | `map mirror coords on` / `off` | Show or hide the mirror's coordinate rulers |
+| `map mirror aoe hatch on` / `off` | Hatch lines inside the areas on the mirror, or outlines only |
 | `map mirror fow reveal` / `hide` | Reveal or hide fog by clicking or dragging on the mirror |
 | `map mirror sprite add <file> [as <name>]` | Place sprites by clicking or dragging on the mirror |
 | `map mirror sprite remove` | Remove sprites by clicking them on the mirror |
