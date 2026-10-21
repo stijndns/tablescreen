@@ -40,7 +40,7 @@ FOG_COLOR = "black"     # opaque: Tk canvases have no transparency
 # Hidden sprites (traps): not drawn on the table; on the mirror faded and
 # outlined, so "I can see it" is never mistaken for "the players can".
 HIDDEN_OPACITY = 0.5
-HIDDEN_COLOR = "#b060ff"
+HIDDEN_COLOR = "#a020f0"    # purple, solid and thick: a thin dashed one got lost
 # Mirror fog: an RGBA image (photo images do blend), so the DM sees under it.
 MIRROR_FOG_ALPHA = 150  # of 255
 GRID_TAG = "grid"
@@ -335,8 +335,8 @@ class BattleMapView(tk.Frame):
             if sprite.hidden:               # the mirror only (see above)
                 self.canvas.create_rectangle(
                     x, y, min(x + box_w, width), min(y + box_h, height),
-                    outline=HIDDEN_COLOR, width=max(2, round(cell / 30)),
-                    dash=(6, 4), tags=SPRITES_TAG)
+                    outline=HIDDEN_COLOR, width=max(5, round(cell / 6)),
+                    tags=SPRITES_TAG)
             self._sprite_keys[sprite.name] = key
 
         for key, anim in self._sprite_anims.items():

@@ -141,7 +141,7 @@ class AreaTool(MirrorTool):
 
 
 REMOVE_COLOR = "#ff4040"
-HIDE_COLOR = "#b060ff"      # as the mirror marks hidden sprites
+HIDE_COLOR = "#a020f0"      # as the mirror marks hidden sprites
 PICK_AOE_COLOR = "white"    # AoEs come in yellow too: the usual highlight would vanish
 
 
