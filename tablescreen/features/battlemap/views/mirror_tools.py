@@ -56,6 +56,11 @@ class MirrorTool:
         (the mode goes on); False ends the mode."""
         return False
 
+    def table_note(self) -> Optional[str]:
+        """Why the preview stays on the mirror right now, if it does for a
+        reason worth saying (a hidden sprite); printed when T is pressed."""
+        return None
+
     def redraw(self, pos: Pos, pressing: bool) -> None:
         """Draw the preview again (after T): tools skip redrawing what they
         already show, so forget that first."""
@@ -70,12 +75,15 @@ class AreaTool(MirrorTool):
     With ``ghost`` (a sprite file) it previews that sprite fitted in them."""
 
     def __init__(self, label: str, hint: str, command: Callable[[CellArea], str],
-                 once: bool = False, ghost: Optional[str] = None):
+                 once: bool = False, ghost: Optional[str] = None,
+                 private_note: Optional[str] = None):
         super().__init__()
         self.label, self.hint, self.once = label, hint, once
         self._command = command
         self._ghost = ghost
-        self.public_preview = ghost is not None     # fog selections stay private
+        self._private_note = private_note           # e.g. placing a hidden sprite
+        # Fog selections stay private; so does anything with a private note.
+        self.public_preview = ghost is not None and private_note is None
         self._start: Optional[Pos] = None       # drag start
         self._hovered: Optional[tuple[int, int]] = None
 
@@ -91,6 +99,9 @@ class AreaTool(MirrorTool):
     def leave(self) -> None:
         self._hovered = None
         super().leave()
+
+    def table_note(self) -> Optional[str]:
+        return self._private_note
 
     def redraw(self, pos: Pos, pressing: bool) -> None:
         self._hovered = None
@@ -123,13 +134,14 @@ class AreaTool(MirrorTool):
 
     def _show(self, area: CellArea, label: bool) -> None:
         if self._ghost:
-            self.ctx.ghost(self._ghost, 0, area, public=True)
+            self.ctx.ghost(self._ghost, 0, area, public=self.public_preview)
         self.ctx.outline(area, width=3 if label else 2)
         if label:
             self.ctx.area_label(area)
 
 
 REMOVE_COLOR = "#ff4040"
+HIDE_COLOR = "#a020f0"      # as the mirror marks hidden sprites
 PICK_AOE_COLOR = "white"    # AoEs come in yellow too: the usual highlight would vanish
 
 
@@ -171,6 +183,55 @@ class SpriteRemoveTool(MirrorTool):
         self.ctx.submit(f"map sprite remove {sprite.name}")
 
 
+class SpriteVisibilityTool(MirrorTool):
+    """Click a hidden sprite to reveal it on the table (``reveal``), or a
+    visible one to hide it. Picks the topmost sprite of that kind in the cell,
+    so a visible chair on a hidden trap doesn't get in the way."""
+
+    def __init__(self, reveal: bool):
+        super().__init__()
+        self._reveal = reveal
+        self.label = "revealing hidden sprites" if reveal else "hiding sprites"
+        self.hint = ("click a hidden sprite to show it on the battlemap."
+                     if reveal else "click a sprite to hide it from the battlemap.")
+        self._color = {} if reveal else {"color": HIDE_COLOR}   # reveal: the usual
+        self._hovered: Optional[tuple[int, int]] = None
+
+    def _target(self, cell: Optional[tuple[int, int]]) -> Optional[Sprite]:
+        if cell is None:
+            return None
+        wanted = tuple(s for s in self.ctx.sprites if s.hidden == self._reveal)
+        return sprite_at(wanted, *cell)
+
+    def hover(self, pos: Pos) -> None:
+        cell = self.ctx.cell_at(pos)
+        if cell == self._hovered:
+            return
+        self._hovered = cell
+        self.ctx.clear()
+        sprite = self._target(cell)
+        if sprite is not None:
+            self.ctx.outline(sprite.area, **self._color)
+            self.ctx.label_at(sprite.area, sprite.name, **self._color)
+
+    def leave(self) -> None:
+        self._hovered = None
+        super().leave()
+
+    def release(self, pos: Pos, click: bool) -> None:
+        cell = self.ctx.cell_at(pos)
+        sprite = self._target(cell)
+        self._hovered = None            # redraw on the next move: it changed
+        self.ctx.clear()
+        if sprite is None:
+            if cell:
+                kind = "hidden sprite" if self._reveal else "visible sprite"
+                print(f"[i] Mirror: no {kind} in {cell_label(*cell, self.ctx.style)}.")
+            return
+        verb = "reveal" if self._reveal else "hide"
+        self.ctx.submit(f"map sprite {verb} {sprite.name}")
+
+
 class SpritePickTool(MirrorTool):
     """Base for tools that first pick a sprite (the topmost in a cell), then
     do something with it. Esc puts a picked sprite back."""
@@ -199,6 +260,22 @@ class SpritePickTool(MirrorTool):
     def _no_sprite(self, cell: Optional[tuple[int, int]]) -> None:
         if cell:
             print(f"[i] Mirror: no sprite in {cell_label(*cell, self.ctx.style)}.")
+
+    def _pick(self, sprite: Sprite) -> None:
+        self._held = sprite
+        if sprite.hidden and self.ctx.table_shown:
+            print(f"[i] Mirror: {self.table_note()}")
+
+    @property
+    def _public(self) -> bool:
+        """A hidden sprite's preview never goes to the table: it would give
+        the trap away."""
+        return self._held is not None and not self._held.hidden
+
+    def table_note(self) -> Optional[str]:
+        if self._held is not None and self._held.hidden:
+            return f"{self._held.name} is hidden; its preview stays on the mirror."
+        return None
 
     def leave(self) -> None:
         if self._held is None:
@@ -246,7 +323,7 @@ class SpriteMoveTool(SpritePickTool):
         cell, sprite = self._sprite_under(pos)
         if sprite is None:
             return
-        self._held = sprite
+        self._pick(sprite)
         self._grab = (cell[0] - sprite.area.top, cell[1] - sprite.area.left)
         self._show_target(pos)
 
@@ -296,7 +373,7 @@ class SpriteMoveTool(SpritePickTool):
         self._shown = ("target", target)
         ctx, sprite = self.ctx, self._held
         ctx.clear()
-        ctx.ghost(sprite.file, sprite.rotation, target, public=True)
+        ctx.ghost(sprite.file, sprite.rotation, target, public=self._public)
         ctx.outline(target)
         ctx.label_at(target, f"{sprite.name} → "
                              f"{cell_label(target.top, target.left, ctx.style)}")
@@ -326,7 +403,8 @@ class SpriteRotateTool(SpritePickTool):
             if sprite is None:
                 self._no_sprite(cell)
                 return
-            self._held, self._delta = sprite, 0.0
+            self._pick(sprite)
+            self._delta = 0.0
             self._show()
             return
         sprite, delta = self._held, self._delta
@@ -352,8 +430,9 @@ class SpriteRotateTool(SpritePickTool):
     def _show(self) -> None:
         ctx, sprite = self.ctx, self._held
         ctx.clear()
-        ctx.shade(sprite.area, public=True)     # the unrotated original is below
-        ctx.ghost(sprite.file, sprite.rotation + self._delta, sprite.area, public=True)
+        ctx.shade(sprite.area, public=self._public)     # the original is below
+        ctx.ghost(sprite.file, sprite.rotation + self._delta, sprite.area,
+                  public=self._public)
         ctx.outline(sprite.area)
         ctx.label_at(sprite.area, f"{sprite.name} {self._delta:+g}°")
 
@@ -397,7 +476,7 @@ class SpriteResizeTool(SpritePickTool):
         ctx.dashed_rect(self._start, pos)
         area = ctx.selection(self._start, pos)
         if area is not None:
-            ctx.ghost(self._held.file, self._held.rotation, area, public=True)
+            ctx.ghost(self._held.file, self._held.rotation, area, public=self._public)
             ctx.outline(area)
             ctx.area_label(area)
 
@@ -407,7 +486,7 @@ class SpriteResizeTool(SpritePickTool):
             if sprite is None:
                 self._no_sprite(cell)
                 return
-            self._held = sprite
+            self._pick(sprite)
             self._shown = None
             self._show_held()
             return

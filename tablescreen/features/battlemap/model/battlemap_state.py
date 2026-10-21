@@ -25,6 +25,7 @@ class Sprite:
     file: str               # relative to assets/images
     area: CellArea          # footprint; the image is fitted into it
     rotation: float = 0     # degrees clockwise, 0 <= rotation < 360
+    hidden: bool = False    # not on the table (traps); the mirror marks it
 
 
 class BattleMapState:
@@ -81,8 +82,8 @@ class BattleMapState:
         key = name.lower()
         return next((s for s in self.sprites if s.name.lower() == key), None)
 
-    def add_sprite(self, file: str, area: CellArea,
-                   name: Optional[str] = None) -> Sprite:
+    def add_sprite(self, file: str, area: CellArea, name: Optional[str] = None,
+                   hidden: bool = False) -> Sprite:
         """Add a sprite; raises ValueError for an invalid or taken name."""
         if name is None:
             name = self._next_default_name()
@@ -91,9 +92,22 @@ class BattleMapState:
                              f"digits, '_' and '-' only.")
         elif self.find_sprite(name):
             raise ValueError(f"A sprite named '{name}' already exists.")
-        sprite = Sprite(name, file, area)
+        sprite = Sprite(name, file, area, hidden=hidden)
         self.sprites = self.sprites + (sprite,)
         return sprite
+
+    def set_hidden(self, name: str, hidden: bool) -> Optional[Sprite]:
+        """Hide or reveal one sprite; keeps everything else, draw order too."""
+        old = self.find_sprite(name)
+        return old and self._replace(old, hidden=hidden)
+
+    def reveal_all(self) -> int:
+        """Reveal every hidden sprite in one change; returns how many."""
+        count = sum(s.hidden for s in self.sprites)
+        if count:
+            self.sprites = tuple(replace(s, hidden=False) if s.hidden else s
+                                 for s in self.sprites)
+        return count
 
     def remove_sprite(self, name: str) -> Optional[Sprite]:
         sprite = self.find_sprite(name)
