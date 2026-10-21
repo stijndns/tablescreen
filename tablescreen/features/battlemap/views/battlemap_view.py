@@ -37,6 +37,10 @@ SPRITES_TAG = "sprites"
 FOG_TAG = "fog"
 AOE_TAG = "aoe"
 FOG_COLOR = "black"     # opaque: Tk canvases have no transparency
+# Hidden sprites (traps): not drawn on the table; on the mirror faded and
+# outlined, so "I can see it" is never mistaken for "the players can".
+HIDDEN_OPACITY = 0.5
+HIDDEN_COLOR = "#b060ff"
 # Mirror fog: an RGBA image (photo images do blend), so the DM sees under it.
 MIRROR_FOG_ALPHA = 150  # of 255
 GRID_TAG = "grid"
@@ -301,6 +305,8 @@ class BattleMapView(tk.Frame):
         self._sprite_keys = {}              # name → frames key
 
         for sprite in self._sprites if cell and cell >= self.min_cell_px else ():
+            if sprite.hidden and not self._mirror:
+                continue                    # hidden from the players
             x, y, box_w, box_h = area_to_pixels(sprite.area, cell)
             if x >= width or y >= height:
                 continue                    # whole footprint off the canvas
@@ -308,12 +314,13 @@ class BattleMapView(tk.Frame):
             if source is None:
                 continue
             size = fit_size(rotated_size(source.size, sprite.rotation), (box_w, box_h))
-            key = (sprite.file, sprite.rotation, *size)
+            key = (sprite.file, sprite.rotation, *size, sprite.hidden)
             if key not in frames:
                 # Reuse frames and animations from the last draw where possible,
                 # so a redraw neither re-decodes nor restarts an animation.
                 loaded = (self._sprite_frames.get(key)
-                          or self._load_frames(sprite.file, size, sprite.rotation))
+                          or self._load_frames(sprite.file, size, sprite.rotation,
+                                               HIDDEN_OPACITY if sprite.hidden else 1.0))
                 if not loaded:
                     continue
                 frames[key] = loaded
@@ -325,6 +332,11 @@ class BattleMapView(tk.Frame):
             items.setdefault(key, []).append(self.canvas.create_image(
                 x + box_w / 2, y + box_h / 2, image=image, anchor="center",
                 tags=SPRITES_TAG))
+            if sprite.hidden:               # the mirror only (see above)
+                self.canvas.create_rectangle(
+                    x, y, min(x + box_w, width), min(y + box_h, height),
+                    outline=HIDDEN_COLOR, width=max(2, round(cell / 30)),
+                    dash=(6, 4), tags=SPRITES_TAG)
             self._sprite_keys[sprite.name] = key
 
         for key, anim in self._sprite_anims.items():
@@ -358,18 +370,22 @@ class BattleMapView(tk.Frame):
                 self._sprite_sources[file] = None       # don't retry every draw
         return self._sprite_sources[file]
 
-    def _load_frames(self, file: str, size: tuple[int, int],
-                     rotation: float) -> list[ImageTk.PhotoImage]:
+    def _load_frames(self, file: str, size: tuple[int, int], rotation: float,
+                     opacity: float = 1.0) -> list[ImageTk.PhotoImage]:
         """Every frame; a mirror only the first: the DM needs what and where,
         not the animation (as with a video backdrop), and every frame costs
-        memory and a repaint."""
+        memory and a repaint. ``opacity`` below 1 fades them (hidden sprites)."""
+        def photo(frame: Image.Image) -> ImageTk.PhotoImage:
+            if opacity < 1:
+                frame.putalpha(frame.getchannel("A").point(lambda a: round(a * opacity)))
+            return ImageTk.PhotoImage(frame)
         try:
             frames = scaled_frames(IMAGES_DIR / file, size, rotation)
             if self._mirror:
-                first = ImageTk.PhotoImage(next(frames))
+                first = photo(next(frames))
                 frames.close()
                 return [first]
-            return [ImageTk.PhotoImage(f) for f in frames]
+            return [photo(f) for f in frames]
         except Exception as exc:
             print(f"[!] Could not load sprite image {file}: {exc}")
             return []
