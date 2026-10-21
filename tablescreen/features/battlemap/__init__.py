@@ -31,7 +31,8 @@ from .views.mirror import MirrorView
 from .views.mirror_input import MirrorInput
 from .views.mirror_tools import (AoeMoveTool, AoePlaceTool, AoeRemoveTool,
                                  AreaTool, SpriteMoveTool, SpriteRemoveTool,
-                                 SpriteResizeTool, SpriteRotateTool)
+                                 SpriteResizeTool, SpriteRotateTool,
+                                 SpriteVisibilityTool)
 
 CURRENT_OS = platform.system()
 
@@ -114,7 +115,7 @@ DM mirror (a scaled copy of the battlemap in its own window; one at most):
                                       mirror: click a cell or drag over cells;
                                       Esc, a right-click or leaving the mirror
                                       stops
-    map mirror sprite add <file> [as <name>]
+    map mirror sprite add <file> [as <name>] [hidden]
                                     — place sprites with the mouse: click a
                                       cell or drag over a range; with a name
                                       one sprite, without one as many as
@@ -129,6 +130,8 @@ DM mirror (a scaled copy of the battlemap in its own window; one at most):
                                       clockwise), click to apply
     map mirror sprite resize        — click a sprite, then drag its new
                                       footprint
+    map mirror sprite reveal        — click a hidden sprite to show it
+    map mirror sprite hide          — click a sprite to hide it again
     map mirror aoe sphere <radius> [as <name>]
     map mirror aoe cube <size> [as <name>]
     map mirror aoe cone <length> [as <name>]
@@ -434,7 +437,7 @@ class BattleMapFeature(FeatureBase):
                 return
             self.services.send(self.name, "mirror", ("aoe_tool", words[1]))
         elif words[0] == "sprite" and words[1:2] in (["remove"], ["move"], ["rotate"],
-                                                      ["resize"]):
+                                                      ["resize"], ["reveal"], ["hide"]):
             self._cmd_mirror_sprite_tool(words[1], words[2:])
         elif words[0] == "fow" and words[1:] in (["reveal"], ["hide"]):
             if not self.state.fow_on:       # checked before any clicking
@@ -446,9 +449,10 @@ class BattleMapFeature(FeatureBase):
             self.services.send(self.name, "mirror", tuple(words))  # mainloop
         else:
             print("Usage: map mirror [show | remove | grid on|off | coords on|off "
-                  "| fow reveal|hide | sprite add <file> [as <name>] "
+                  "| fow reveal|hide | sprite add <file> [as <name>] [hidden] "
                   "| sprite remove | sprite move | sprite rotate [step] "
-                  "| sprite resize | aoe sphere <radius> [as <name>] "
+                  "| sprite resize | sprite reveal | sprite hide "
+                  "| aoe sphere <radius> [as <name>] "
                   "| aoe cube <size> [as <name>] | aoe cone <length> [as <name>] "
                   "| aoe move | aoe remove]")
 
@@ -481,7 +485,8 @@ class BattleMapFeature(FeatureBase):
                            ("aoe_place", shape, fields["size_ft"], name))
 
     def _cmd_mirror_sprite_tool(self, verb: str, args: list[str]) -> None:
-        """remove, move, rotate [step], resize: tools that pick a sprite."""
+        """remove, move, rotate [step], resize, reveal, hide: tools that pick
+        a sprite."""
         step = 15.0
         if verb == "rotate" and len(args) == 1:
             try:
@@ -499,17 +504,26 @@ class BattleMapFeature(FeatureBase):
         if not self.state.sprites:
             print(f"[i] There are no sprites to {verb}.")
             return
+        if verb in ("reveal", "hide") and not any(
+                s.hidden == (verb == "reveal") for s in self.state.sprites):
+            kind = "hidden" if verb == "reveal" else "visible"
+            print(f"[i] There are no {kind} sprites to {verb}.")
+            return
         self.services.send(self.name, "mirror", ("sprite_tool", verb, step))
 
     def _cmd_mirror_sprite_add(self, args: list[str]) -> None:
         """Check everything `map sprite add` would, except the cells, before
         any clicking."""
+        # A trailing `hidden`, by position as for `map sprite add`.
+        hidden = len(args) in (2, 4) and args[-1].lower() == "hidden"
+        if hidden:
+            args = args[:-1]
         if len(args) == 3 and args[1].lower() == "as":
             file, name = args[0], args[2]
         elif len(args) == 1:
             file, name = args[0], None
         else:
-            print("Usage: map mirror sprite add <file> [as <name>]")
+            print("Usage: map mirror sprite add <file> [as <name>] [hidden]")
             return
         if not (IMAGES_DIR / file).is_file():
             print(f"[!] File not found: {IMAGES_DIR / file}")
@@ -521,7 +535,7 @@ class BattleMapFeature(FeatureBase):
         if name is not None and self.state.find_sprite(name):
             print(f"[!] A sprite named '{name}' already exists.")
             return
-        self.services.send(self.name, "mirror", ("sprite", file, name))
+        self.services.send(self.name, "mirror", ("sprite", file, name, hidden))
 
     def _cmd_aoe(self, rest: list[str]) -> None:
         action = rest[0].lower() if rest else ""
@@ -772,6 +786,8 @@ class BattleMapFeature(FeatureBase):
                 self._mirror_show(announce_open=False)
                 self.mirror_input.start(
                     SpriteRotateTool(step) if verb == "rotate"
+                    else SpriteVisibilityTool(reveal=verb == "reveal")
+                    if verb in ("reveal", "hide")
                     else {"remove": SpriteRemoveTool, "move": SpriteMoveTool,
                           "resize": SpriteResizeTool}[verb]())
             elif action == "sprite":
@@ -841,20 +857,27 @@ class BattleMapFeature(FeatureBase):
               + (f"; {self.mirror_input.mode.label}" if self.mirror_input.mode else "")
               + ".")
 
-    def _mirror_sprite_mode(self, file: str, name: Optional[str]) -> None:
+    def _mirror_sprite_mode(self, file: str, name: Optional[str],
+                            hidden: bool = False) -> None:
         """Clicks and drags on the mirror place sprites: one with a name (a
-        name is used once), as many as clicked without one."""
+        name is used once), as many as clicked without one. Hidden ones never
+        get a table preview: it would give them away."""
         self._mirror_show(announce_open=False)
+        what = ("hidden " if hidden else "") + (name or file)
         if name is not None:
-            label, hint = f"placing {name}", f"click a cell or drag over a range to place {name}."
+            label, hint = f"placing {what}", f"click a cell or drag over a range to place {what}."
         else:
-            label, hint = (f"placing {file}",
-                           f"click a cell or drag over a range to place {file}; "
+            label, hint = (f"placing {what}",
+                           f"click a cell or drag over a range to place {what}; "
                            f"each one adds a sprite.")
+        if hidden:
+            hint += " It stays off the battlemap until revealed."
         self.mirror_input.start(AreaTool(
             label=label, hint=hint, once=name is not None, ghost=file,
+            private_note=("hidden sprites stay on the mirror; T does nothing "
+                          "while placing one." if hidden else None),
             command=lambda area: sprite_add_command(
-                file, area, self.mirror.view.coords_style, name)))
+                file, area, self.mirror.view.coords_style, name, hidden)))
 
     def _mirror_fow_mode(self, action: str) -> None:
         """Clicks and drags on the mirror reveal or hide fog, until the mode
@@ -1036,7 +1059,7 @@ class BattleMapFeature(FeatureBase):
             elif len(parts) == 3 and parts[2].lower() == "fow":
                 options = ("reveal", "hide")
             elif len(parts) == 3 and parts[2].lower() == "sprite":
-                options = ("add", "remove", "move", "rotate", "resize")
+                options = ("add", "remove", "move", "rotate", "resize", "reveal", "hide")
             elif len(parts) == 3 and parts[2].lower() == "aoe":
                 options = ("sphere", "cube", "cone", "move", "remove", "hatch")
             elif len(parts) == 4 and [p.lower() for p in parts[2:4]] == ["aoe", "hatch"]:
@@ -1049,7 +1072,10 @@ class BattleMapFeature(FeatureBase):
                 return tab_completion(clean, list(Image.registered_extensions()),
                                       CURRENT_OS, "image")
             elif len(parts) == 5 and parts[2:4] == ["sprite", "add"]:
-                options = ("as",)
+                options = ("as", "hidden")
+            elif (len(parts) == 7 and parts[2:4] == ["sprite", "add"]
+                  and parts[5].lower() == "as"):
+                options = ("hidden",)
             else:
                 options = ()
             return [o for o in options if o.startswith(text.lower())]
@@ -1097,11 +1123,13 @@ class BattleMapFeature(FeatureBase):
         return []
 
 def sprite_add_command(file: str, area: CellArea, style: str,
-                       name: Optional[str] = None) -> str:
+                       name: Optional[str] = None, hidden: bool = False) -> str:
     """The `map sprite add` line for a mirror click. The file is quoted so
     it reaches the command unchanged (spaces included)."""
     line = f"map sprite add {shlex.quote(file)} {area_label(area, style)}"
-    return f"{line} as {name}" if name else line
+    if name:
+        line += f" as {name}"
+    return f"{line} hidden" if hidden else line
 
 
 def _on_off(on: bool) -> str:

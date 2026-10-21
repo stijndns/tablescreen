@@ -136,12 +136,20 @@ class MirrorInput:
     def _toggle_table(self) -> None:
         """T: show this mode's result previews on the table too, or stop."""
         tool = self.mode
-        if tool is None or not tool.public_preview:
-            return                      # e.g. fog reveal: the DM's decision
+        if tool is None:
+            return
+        if not tool.public_preview:     # e.g. fog reveal: the DM's decision
+            note = tool.table_note()
+            if note:
+                print(f"[i] Mirror: {note}")
+            return
         self.table_shown = not self.table_shown
         self._set_title()
         print("[i] Mirror: the preview is shown on the table too."
               if self.table_shown else "[i] Mirror: the preview is on the mirror only.")
+        note = tool.table_note() if self.table_shown else None
+        if note:
+            print(f"[i] Mirror: {note}")
         self.clear()
         if self._pointer is not None:
             tool.redraw(self._pointer, pressing=self._press is not None)

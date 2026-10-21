@@ -110,6 +110,21 @@ Sprites without a name are called `sprite1`, `sprite2` and so on. Numbers are ne
 
 Sprites stay on the grid when the backdrop changes. `map sprite clear` removes all of them at once.
 
+### Hidden sprites
+
+A hidden sprite is on the map for the game master but not for the players, for traps, secret doors or a monster lying in wait. Adding `hidden` at the end of `map sprite add` places one:
+
+```
+map sprite add spikes.png E8 as pit hidden     on the mirror only
+map sprite reveal pit                          now on the table screen as well
+map sprite hide pit                            hidden again
+map sprite reveal all                          every hidden sprite at once
+```
+
+The table screen does not draw hidden sprites at all. The [game master mirror](#game-master-mirror) shows them at half opacity with a violet dashed outline, so a sprite the game master can see is never mistaken for one the players can see. Revealing or hiding a sprite changes nothing else about it: its name, footprint, rotation and place in the drawing order stay the same. `map sprite list` marks hidden sprites and counts them.
+
+Hidden sprites and the [fog of war](#fog-of-war) are independent. Revealing fog does not reveal a hidden sprite in it, and a revealed sprite under the fog stays covered on the table screen until its cells are revealed too; the report mentions this. `… as hidden` on its own names a sprite "hidden"; only a final `hidden` after the cells or the name hides it.
+
 ## Areas of effect
 
 Areas of effect are drawn as hatched cells with an outline and a dot at the origin. Each one gets its own colour, so overlapping areas remain distinguishable. `map aoe hatch off` leaves out the hatch lines on the table screen, so areas are drawn as outlines with their origin dot only; `map aoe hatch on` brings them back, and `map aoe hatch` on its own prints the current setting. The default comes from `aoe_hatching` in the configuration. Hatching costs a little drawing time on every frame of a video backdrop, so turning it off can help with very large areas. All sizes are in feet and must be multiples of 5; one cell is 5 feet. Diagonal distance follows the 5-10-5 rule: the first diagonal step costs 5 feet, the second 10, the third 5, and so on.
@@ -213,11 +228,12 @@ The mirror opens where the battlemap window first appeared when the program star
 
 The mirror is a copy of the table window, not a second calibrated screen. The table's map is scaled down uniformly to fit the mirror window, and black bars fill the remaining space, so the mirror always shows the same cells as the table, including the partial cells at the right and bottom edges. It follows the table when the table changes, for example after `map fullscreen` or `map grid resize`. Resizing the mirror window only changes how large the copy is drawn.
 
-The mirror differs from the table screen in four ways:
+The mirror differs from the table screen in five ways:
 
 - **Its own grid, coordinates and AoE hatching.** `map mirror grid on|off`, `map mirror coords on|off` and `map mirror aoe hatch on|off` control the mirror only; the grid and coordinates are on when it opens, and the hatching follows `aoe_hatching` in the configuration. `map grid on|off`, `map coords on|off|location` and `map aoe hatch on|off` control the table only. The coordinate style (`map coords style`) applies to both.
 - **Rulers instead of labels.** Coordinates are shown as rulers outside the map: column numbers above it and row labels to its left. Their font size is fixed and follows the display scaling, so they stay readable however small the cells are. When a cell is too small for its label, the rulers label every 2nd, 5th, 10th, ... cell.
 - **See-through fog.** Hidden cells are darkened rather than black, so the game master sees what is under the fog, including sprites placed in hidden areas. Tk canvas shapes cannot be transparent, but images can, so the mirror's fog is drawn as one semi-transparent image.
+- **Hidden sprites.** Sprites hidden from the players are shown faded with a violet dashed outline; see [hidden sprites](#hidden-sprites).
 - **Stills instead of animation.** A `.webm` backdrop is shown as a still image of its first frame, so the video is not decoded a second time, and animated sprites show their first frame too: the mirror is for seeing what is where, and every animation frame would cost memory and repaints.
 
 The display settings never change the battlemap itself. `map mirror grid` and `map mirror coords` only change what the mirror shows, the cell size always comes from the table, and resizing or closing the mirror leaves the table screen untouched. The only way the mirror changes the map is mouse input, described below, and that goes through the normal commands.
@@ -236,11 +252,13 @@ Because the result is an ordinary command, the same checks apply as when typing 
 | Command | With the mouse | Runs |
 |---|---|---|
 | `map mirror fow reveal` / `hide` | Click a cell or drag over cells | `map fow reveal` / `hide <cells>` |
-| `map mirror sprite add <file> [as <name>]` | Click a cell or drag over a range | `map sprite add <file> <cells> [as <name>]` |
+| `map mirror sprite add <file> [as <name>] [hidden]` | Click a cell or drag over a range | `map sprite add <file> <cells> [as <name>] [hidden]` |
 | `map mirror sprite remove` | Click a sprite | `map sprite remove <name>` |
 | `map mirror sprite move` | Click a sprite, then click where it goes; or drag it there | `map sprite move <name> <cell>` |
 | `map mirror sprite rotate [step]` | Click a sprite, turn the wheel, click | `map sprite rotate <name> <degrees>` |
 | `map mirror sprite resize` | Click a sprite, then drag its new footprint | `map sprite resize <name> <range>` |
+| `map mirror sprite reveal` | Click a hidden sprite | `map sprite reveal <name>` |
+| `map mirror sprite hide` | Click a visible sprite | `map sprite hide <name>` |
 | `map mirror aoe sphere <radius> [as <name>]` | Move the preview, click | `map aoe sphere <origin> <radius> [as <name>]` |
 | `map mirror aoe cube <size> [as <name>]` | Move the preview, click | `map aoe cube <corner> <size> [as <name>]` |
 | `map mirror aoe cone <length> [as <name>]` | Move the preview, turn the wheel to aim it, click | `map aoe cone <cell> <length> <direction> [mirror] [as <name>]` |
@@ -260,11 +278,11 @@ A mode command opens the mirror if it is not open yet. Everything that can be ch
 
 **Showing a preview on the table.** While a mode that places, moves, rotates or resizes a sprite or an area of effect is on, pressing T on the mirror also shows its preview on the table screen, for example to let the players see where a fireball would land before it is placed. Pressing T again shows it on the mirror only. The console mentions T when such a mode starts, the mirror's title says when the preview is shown on the table, and it is off again whenever a mode starts.
 
-The table shows only the result: the see-through sprite where it will be drawn, or the outline and origin dot of the area, without a fill or labels. Highlights of what a click would pick or remove, the hovered cell and all labels stay on the mirror. T does nothing in the fog modes, so what is about to be revealed remains the game master's decision. Sprite previews on the table respect the fog of war: like the sprites themselves, they are drawn below it, so moving a hidden sprite does not give it away. The table preview disappears when the mouse leaves the mirror's map and when the mode ends.
+The table shows only the result: the see-through sprite where it will be drawn, or the outline and origin dot of the area, without a fill or labels. Highlights of what a click would pick or remove, the hovered cell and all labels stay on the mirror. T does nothing in the fog modes, so what is about to be revealed remains the game master's decision. Sprite previews on the table respect the fog of war: like the sprites themselves, they are drawn below it, so moving a sprite under the fog does not give it away. The preview of a [hidden sprite](#hidden-sprites) never goes to the table at all: T does nothing while placing one, and while one is picked up for moving, rotating or resizing its preview stays on the mirror, which the console mentions. The table preview disappears when the mouse leaves the mirror's map and when the mode ends.
 
 **Selecting cells.** The cell where the mouse button is pressed always counts, wherever in it the drag starts. From there, a drag adds each further column of which at least half the width lies inside the dragged rectangle, and each further row of which at least half the height does, so the far edge snaps to the nearest grid line. The result is always a rectangle of cells, the same kind of range as `B2:E8`. A drag that leaves the map stops at its edge, and a short drag inside one cell selects just that cell.
 
-**Picking sprites and areas.** A sprite is picked by clicking any cell of its footprint, an area of effect by clicking any of its cells, not by the exact shape of the image. Where several overlap, the topmost is picked: the one added last, which is also drawn on top. Sprites hidden under the fog of war can be picked on the mirror, where they are visible.
+**Picking sprites and areas.** A sprite is picked by clicking any cell of its footprint, an area of effect by clicking any of its cells, not by the exact shape of the image. Where several overlap, the topmost is picked: the one added last, which is also drawn on top. `map mirror sprite reveal` only considers hidden sprites and `map mirror sprite hide` only visible ones, so a visible chair on top of a hidden trap does not get in the way. Sprites under the fog of war, and hidden sprites, can be picked on the mirror, where they are visible.
 
 **Moving.** A picked sprite or area can be put down with a second click, or dragged and released. It hangs from the pointer by the point where it was picked, so it does not jump. A sprite stays on the cells that are fully visible on the table screen. An area keeps its shape, size, direction and colour, and its new origin follows the same rules as when it is created (below).
 
@@ -291,13 +309,15 @@ The table shows only the result: the see-through sprite where it will be drawn, 
 | `map coords on` / `off` | Show or hide coordinate labels |
 | `map coords style letters` / `numbers` | Notation for labels and output |
 | `map coords location sides` / `cells` | Where the labels are drawn |
-| `map sprite add <file> <cell or range> [as <name>]` | Place a sprite |
+| `map sprite add <file> <cell or range> [as <name>] [hidden]` | Place a sprite; `hidden` keeps it off the table screen |
 | `map sprite move <name> <cell>` | Move a sprite's top-left corner, keeping its size |
 | `map sprite resize <name> <range>` | Set a sprite's footprint |
 | `map sprite rotate <name> <degrees>` | Rotate clockwise by the given angle |
 | `map sprite remove <name>` | Remove one sprite |
 | `map sprite list` | List all sprites |
 | `map sprite clear` | Remove all sprites |
+| `map sprite reveal <name>` / `all` | Show a hidden sprite on the table screen, or all of them |
+| `map sprite hide <name>` | Hide a sprite from the table screen |
 | `map aoe sphere <origin> <radius> [as <name>]` | Spherical area |
 | `map aoe cube <corner> <size> [as <name>]` | Cubic area |
 | `map aoe cone <cell> <length> <direction> [mirror] [as <name>]` | Cone |
@@ -316,11 +336,13 @@ The table shows only the result: the see-through sprite where it will be drawn, 
 | `map mirror coords on` / `off` | Show or hide the mirror's coordinate rulers |
 | `map mirror aoe hatch on` / `off` | Hatch lines inside the areas on the mirror, or outlines only |
 | `map mirror fow reveal` / `hide` | Reveal or hide fog by clicking or dragging on the mirror |
-| `map mirror sprite add <file> [as <name>]` | Place sprites by clicking or dragging on the mirror |
+| `map mirror sprite add <file> [as <name>] [hidden]` | Place sprites by clicking or dragging on the mirror; `hidden` keeps them off the table screen |
 | `map mirror sprite remove` | Remove sprites by clicking them on the mirror |
 | `map mirror sprite move` | Move sprites on the mirror (click-click or drag) |
 | `map mirror sprite rotate [step]` | Rotate sprites with the mouse wheel on the mirror (default step 15°) |
 | `map mirror sprite resize` | Resize sprites by dragging their new footprint on the mirror |
+| `map mirror sprite reveal` | Reveal hidden sprites by clicking them on the mirror |
+| `map mirror sprite hide` | Hide sprites by clicking them on the mirror |
 | `map mirror aoe sphere <radius> [as <name>]` | Place spheres with a live preview on the mirror |
 | `map mirror aoe cube <size> [as <name>]` | Place cubes with a live preview on the mirror |
 | `map mirror aoe cone <length> [as <name>]` | Place cones on the mirror, aimed with the mouse wheel |
