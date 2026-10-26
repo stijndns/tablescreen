@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tablescreen spike</title>
+<style>
+  :root { --bg: #15171c; --fg: #e8e8e8; --dim: #8a8f98; --ok: #4cd06a; --bad: #ff5a5a; --accent: #ffd000; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+         font: 16px/1.4 system-ui, sans-serif; }
+  h1 { font-size: 1.2em; margin: 0 0 12px; }
+  .card { background: #1f232b; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .dim { color: var(--dim); }
+  input, button { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid #333;
+                  background: #0f1115; color: var(--fg); }
+  button { background: var(--accent); color: #111; border: 0; font-weight: 600; }
+  form { display: grid; gap: 8px; }
+  #log { font: 13px/1.35 ui-monospace, monospace; max-height: 40vh; overflow: auto; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Tablescreen spike: HTTPS + secure WebSocket</h1>
+
+<div class="card" id="login-card">
+  <form id="login">
+    <input name="user" placeholder="user (player or dm)" autocomplete="username" required>
+    <input name="password" type="password" placeholder="password (spike)" autocomplete="current-password" required>
+    <button>Log in</button>
+  </form>
+  <div id="login-error" class="bad"></div>
+</div>
+
+<div class="card">
+  <div class="row"><span>Secure context</span><b id="secure"></b></div>
+  <div class="row"><span>Logged in as</span><b id="user" class="dim">–</b></div>
+  <div class="row"><span>WebSocket</span><b id="ws" class="dim">not connected</b></div>
+  <div class="row"><span>Server pushes received</span><b id="ticks">0</b></div>
+  <div class="row"><span>Connected clients</span><b id="clients">–</b></div>
+  <div class="row"><span>Echo round trip</span><b id="rtt">–</b></div>
+  <div class="row"><span>Reconnects</span><b id="reconnects">0</b></div>
+  <p><button id="logout" type="button">Log out</button></p>
+</div>
+
+<div class="card"><div class="dim">Log</div><div id="log"></div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const log = text => { $("log").textContent = `${new Date().toLocaleTimeString()} ${text}\n` + $("log").textContent; };
+$("secure").textContent = window.isSecureContext ? "yes" : "NO";
+$("secure").className = window.isSecureContext ? "ok" : "bad";
+
+let socket = null, ticks = 0, reconnects = 0, retry = 0, wanted = false, echoTimer = null;
+
+function setWs(text, cls) { $("ws").textContent = text; $("ws").className = cls; }
+
+function connect() {
+  wanted = true;
+  socket = new WebSocket(`wss://${location.host}/ws`);
+  setWs("connecting…", "dim");
+  socket.onopen = () => { retry = 0; setWs("connected", "ok"); log("WebSocket open"); };
+  socket.onmessage = event => {
+    const m = JSON.parse(event.data);
+    if (m.type === "hello") { $("user").textContent = m.user; $("user").className = "ok"; log(`hello as ${m.user}`); }
+    else if (m.type === "tick") { $("ticks").textContent = ++ticks; $("clients").textContent = m.clients; }
+    else if (m.type === "echo") { $("rtt").textContent = `${(performance.now() - m.sent).toFixed(0)} ms`; }
+    else if (m.type === "error") { log(`server: ${m.error}`); wanted = false; }
+  };
+  socket.onclose = event => {
+    setWs(`closed (${event.code})`, "bad");
+    log(`WebSocket closed, code ${event.code}`);
+    if (event.code === 4401) { showLogin(); return; }
+    if (wanted) {                               // back off: 1, 2, 4 … 10 s
+      const delay = Math.min(10000, 1000 * 2 ** retry++);
+      reconnects++; $("reconnects").textContent = reconnects;
+      setTimeout(connect, delay);
+    }
+  };
+  socket.onerror = () => log("WebSocket error (certificate not accepted for wss?)");
+  clearInterval(echoTimer);
+  echoTimer = setInterval(() => {
+    if (socket.readyState === WebSocket.OPEN)
+      socket.send(JSON.stringify({ type: "echo", sent: performance.now() }));
+  }, 2000);
+}
+
+function showLogin() { $("login-card").style.display = ""; }
+
+$("login").onsubmit = async event => {
+  event.preventDefault();
+  const form = new FormData(event.target);
+  const response = await fetch("/login", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user: form.get("user"), password: form.get("password") }) });
+  const result = await response.json();
+  if (!result.ok) { $("login-error").textContent = result.error; return; }
+  $("login-error").textContent = ""; $("login-card").style.display = "none";
+  log(`logged in as ${result.user}`); connect();
+};
+
+$("logout").onclick = async () => {
+  wanted = false; await fetch("/logout", { method: "POST" });
+  if (socket) socket.close(); $("user").textContent = "–"; $("user").className = "dim";
+  showLogin(); log("logged out");
+};
+
+// Already logged in (reload): go straight to the WebSocket.
+fetch("/me").then(r => { if (r.ok) { $("login-card").style.display = "none"; connect(); } });
+log(navigator.userAgent);
+</script>
+</body>
+</html>
