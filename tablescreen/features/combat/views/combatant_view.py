@@ -121,7 +121,8 @@ class CombatantView(tk.Canvas):
     def _create_initiative(self, is_current: bool, is_dimmed: bool):
         init_color = PALETTE["current_glow"] if is_current else (PALETTE["text_dim"] if is_dimmed else PALETTE["text_primary"])
         hidden = self.combatant.hidden_initiative()
-        init_text = "?" if hidden else str(self.combatant.initiative)
+        init_text = ("?" if hidden or self.combatant.initiative is None
+                     else str(self.combatant.initiative))
         self.create_text(self.init_col_w // 2, self.row_h // 2,
             text=init_text, fill=init_color,
             font=(FONT_FAMILY, scaled_font(NAME_FONT_SIZE, self._scale), "bold"),

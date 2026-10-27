@@ -176,14 +176,19 @@ def _resolve_new_ties(combat: Combat, added: list[Combatant]) -> None:
     """Ask the turn order for initiative ties the import created, as
     `combat add` does during combat."""
     ties = combat.tied_initiatives()
-    for initiative in sorted({c.initiative for c in added} & ties.keys(), reverse=True):
+    entered = {c.initiative for c in added if c.initiative is not None}
+    for initiative in sorted(entered & ties.keys(), reverse=True):
         prompts.resolve_ties_for(combat, initiative, ties[initiative])
 
 
-def _prompt_initiative(name: str, ctype: str, hp_max: int) -> int:
+def _prompt_initiative(name: str, ctype: str, hp_max: int) -> int | None:
+    """A number, or None for `?` / Enter: entered later (e.g. by the player)."""
     while True:
+        raw = ask(f"  Initiative for {name} ({ctype.upper()}, {hp_max} HP; "
+                  f"? or Enter = later): ").strip()
+        if raw in ("", "?"):
+            return None
         try:
-            raw = ask(f"  Initiative for {name} ({ctype.upper()}, {hp_max} HP): ")
-            return int(raw.strip())
+            return int(raw)
         except ValueError:
-            print("  [!] Please enter an integer.")
+            print("  [!] Please enter a whole number, or ? for later.")

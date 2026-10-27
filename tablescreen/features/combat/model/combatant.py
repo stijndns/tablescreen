@@ -46,7 +46,7 @@ class Combatant:
 
     name: str
     type: Type
-    initiative: int
+    initiative: Optional[int]    # None: not entered yet (`?`)
     hp_current: int
     hp_max: int
     temp_hp: int = 0             # buffer that absorbs damage before HP (5e)
@@ -201,7 +201,7 @@ class Combatant:
         return (
             f"[{self.type.value.upper():7s}] "
             f"{self.name:<20s} "
-            f"Init:{self.initiative:>3}  "
+            f"Init:{'?' if self.initiative is None else self.initiative:>3}  "
             f"HP:{self.hp_current:>4}/{self.hp_max:<4}"
             + (f" +{self.temp_hp} temp" if self.temp_hp else "")
             + (f"  {res_str}" if res_str else "")

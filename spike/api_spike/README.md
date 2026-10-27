@@ -29,3 +29,24 @@ Test accounts: `player` / `spike` and `dm` / `spike`.
 7. Log out: the WebSocket closes and the login form returns.
 
 Note per device (model, browser) anything that differs, especially a WebSocket that stays "connecting" or errors after the certificate was accepted.
+
+## If a device can't reach it
+
+Works on the PC itself, but a phone gets "took too long to respond": almost always **Windows Firewall**.
+
+- Check the PC's network profile under Settings → Network & Internet → Ethernet (or Wi-Fi) → Network profile type. It should be **Private**. On a **Public** profile, "allow on private networks" doesn't apply.
+- Or allow the port explicitly, in PowerShell **as administrator**:
+
+  ```
+  New-NetFirewallRule -DisplayName "Tablescreen spike 8443" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow -Profile Private
+  ```
+
+  Remove it again with `Remove-NetFirewallRule -DisplayName "Tablescreen spike 8443"`.
+
+Other causes, less likely:
+
+- The server runs in the dev container instead of on Windows. VS Code only forwards its port to `localhost`.
+- The phone is on a guest Wi-Fi network, or has a VPN on.
+- The address was typed without `https://` or without `:8443`.
+
+`netstat -ano | findstr 8443` should show `0.0.0.0:8443 … LISTENING`.

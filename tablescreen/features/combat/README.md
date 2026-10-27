@@ -26,6 +26,16 @@ combat end
 
 `combat start` sorts everyone by initiative and starts round 1. When two or more combatants share an initiative value, the shell asks for their order first (for example `2 1 3`).
 
+### Rolling initiative
+
+An initiative that isn't known yet can be entered as `?`: `combat add Aria ? pc 52`, or `?` (or just Enter) at the initiative question of `combat import`. It shows as `?` and sorts last.
+
+Combat never starts with an initiative missing. `combat start` then waits for them instead: the shell lists who is missing, and `combat initiative <name> <value>` enters each value. When the last one is in, combat starts by itself. Ties are still the game master's: the shell asks for their order as usual. If the last value didn't come from the console (in the future, from a player), the shell names the ties and `combat start` sets their order and begins. `combat start` again lists who is still missing; `combat end` stops waiting and keeps the roster.
+
+`combat initiative <name> <value>` also corrects an initiative. Before combat, that is always possible. During combat, a change is only accepted at the start of a round, while its first combatant is active, so the turn order never changes in the middle of a round. If the change gives the round a different first combatant, that combatant's turn starts. A combatant added during combat with `?` can get their initiative at any time and joins at the start of the next round once it is in.
+
+`combat ties` sets the order of all tied initiatives again, for example after a tie the shell couldn't ask about.
+
 `next` moves to the next turn and starts a new round after the last combatant. At the start of a combatant's turn, their Reaction and legendary actions are refilled. The combat screen follows the active combatant to the page it is on.
 
 `combat end` clears the encounter; `combat new` clears the roster to prepare a new one. Both ask for confirmation when the combat log has unsaved entries.
@@ -91,7 +101,9 @@ Following the 5e rules, temporary hit points do not stack: a grant only takes ef
 
 The combat screen shows temporary hit points of player characters next to their hit points (`23/30 HP +6`). For NPCs and monsters, they are not shown to the players.
 
-When a combatant drops to 0 hit points, the shell asks whether they are dead, dying or incapacitated. A dying combatant who takes more damage can be marked dead or stay dying. A dying or incapacitated combatant who is healed above 0 becomes active again; a dead one stays dead, even when healed. There is currently no command to change a status directly.
+When a combatant drops to 0 hit points, the shell asks whether they are dead, dying or incapacitated. A dying combatant who takes more damage can be marked dead or stay dying. A dying or incapacitated combatant who is healed above 0 becomes active again; a dead one stays dead, even when healed. When the change wasn't typed in the console (in the future, a player's action), the shell can't ask: it prints a notice instead and the status is left to the game master.
+
+`combat status <name> <status>` sets a status directly: `active`, `dying`, `dead` or `incapacitated`. It is also the way to bring a dead combatant back.
 
 ## Actions
 
@@ -104,7 +116,13 @@ combat action Goblin-A condition Brann prone
 combat action Brann remove_condition Brann prone
 ```
 
-When the actor is not the active combatant, the shell asks which resource the action used: their Reaction, a legendary action, or nothing (a special case such as a feature that costs no resource).
+When the actor is not the active combatant, the shell asks which resource the action used: their Reaction, a legendary action, or nothing (a special case such as a feature that costs no resource). To answer up front, end the command with `uses reaction`, `uses legendary` or `uses none`:
+
+```
+combat action Goblin-A damage Aria 4 uses reaction
+```
+
+A resource the actor doesn't have is refused. On the actor's own turn, `uses` is ignored and nothing is spent.
 
 ## Resources and conditions
 
@@ -134,7 +152,7 @@ condition list Brann
 Both work before, during and after combat:
 
 - Export writes every combatant except those marked dead (they are listed in the shell). Combatants who left combat are included, since they may only have fled.
-- Import asks for each combatant's initiative. During combat, imported combatants join as pending and enter the turn order at the start of the next round; an initiative tie with someone already in the fight is resolved the same way as with `combat add`.
+- Import asks for each combatant's initiative; `?` or Enter leaves it to be entered later (see Rolling initiative). During combat, imported combatants join as pending and enter the turn order at the start of the next round; an initiative tie with someone already in the fight is resolved the same way as with `combat add`.
 - Outside combat, an imported combatant replaces one with the same name. During combat, a name that is already in the fight is skipped instead, so nobody is removed from a running turn order; rename or remove the existing combatant first.
 
 A roster file stores each combatant's name, type, `hp_max`, portrait and resource maxima, plus:
@@ -153,15 +171,18 @@ Everything that happens during combat is recorded in a log. `combat log` prints 
 
 | Command | Description |
 |---|---|
-| `combat add <name> <init> <type> <hp> [current]` | Add a combatant (`pc`, `npc` or `monster`) |
+| `combat add <name> <init> <type> <hp> [current]` | Add a combatant (`pc`, `npc` or `monster`); initiative `?` = entered later |
 | `combat noreaction` | The next `combat add` gets no Reaction |
 | `combat remove <name>` | Remove a combatant, or mark them as having left during combat |
-| `combat start` | Sort by initiative and start round 1 |
+| `combat start` | Sort by initiative and start round 1; with initiatives missing, wait for them first |
+| `combat initiative <name> <value>` | Enter or correct an initiative (during combat only at the start of a round) |
+| `combat ties` | Set the order of tied initiatives |
 | `combat status` | Print the full status table in the shell |
+| `combat status <name> <status>` | Set a status: `active`, `dying`, `dead` or `incapacitated` |
 | `combat show` | Show the combat screen again after an image |
-| `combat end` | End the encounter and clear the roster |
+| `combat end` | End the encounter and clear the roster; while waiting for initiatives, stop waiting |
 | `combat new` | Clear the roster for a new encounter |
-| `combat action <actor> <action> <target> ...` | Record damage, healing or a condition change |
+| `combat action <actor> <action> <target> ... [uses reaction\|legendary\|none]` | Record damage, healing or a condition change; `uses` answers the out-of-turn question |
 | `combat legendary <name> <max>` | Give an NPC or monster legendary actions |
 | `combat image <name> <file>` | Assign a portrait |
 | `combat reset resources` | Refill all resources for everyone |
