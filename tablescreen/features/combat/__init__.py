@@ -20,6 +20,7 @@ added later, paging needs an explicit target — see the note in _on_message.
 from __future__ import annotations
 
 from ...core.feature import FeatureBase, ShellServices
+from . import api as combat_api
 from .commands import CombatCommandsMixin
 from .log import CombatLog
 from .model import Combat
@@ -90,6 +91,7 @@ class CombatFeature(CombatCommandsMixin, FeatureBase):
             help_text="page next | page prev | page <number> — navigate pages.")
 
         services.subscribe(self._on_message)
+        combat_api.register(services, self.combat)
 
     def snapshot(self) -> dict:
         return self.combat.snapshot()

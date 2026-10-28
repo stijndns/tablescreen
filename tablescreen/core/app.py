@@ -10,6 +10,7 @@ This is the only place that knows how the pieces fit together:
     Shell         ─►  neutral cmd.Cmd host: the command registry and dispatch
     Executor      ─►  the one thread that runs commands, from every source
     Console       ─►  reads the keyboard; feeds the executor, answers ask()
+    ApiService    ─►  the bridge to the player webapp's gateway ([api])
 
 Features are loaded by name with importlib, so core never imports a
 feature module directly.
@@ -33,6 +34,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import console
+from .api import ApiConfig, ApiService
 from .bus import MessageBus, Message, APP_TARGET
 from .console import Console
 from .executor import APP_SOURCE, SHELL_SOURCE, CommandExecutor
@@ -161,6 +163,11 @@ class Application:
             on_stop=lambda: self.bus.send(APP_TARGET, "exit", source=APP_SOURCE))
         self.console = Console(self.shell, self.executor)
         console.install(self.console)       # backs core.console.ask()
+        self.api = ApiService(ApiConfig.from_config(self.config), self.executor)
+        self.shell.register_command(
+            "api", self.api.do_api, self.api.complete_api,
+            help_text="api [status] | api user … — the player webapp. Type 'api help'.",
+            feature="core")
         self.features: dict[str, Feature] = {}
         self._shutting_down = False
 
@@ -221,6 +228,12 @@ class Application:
                 raise ValueError(f"source must name the input, not {source!r}")
             self.executor.submit(line, source)
 
+        def publish_state(snapshot, schema):
+            self.api.publish_state(name, snapshot, schema)
+
+        def register_action(action, fields, permission, handler):
+            self.api.register_action(name, action, fields, permission, handler)
+
         return ShellServices(
             feature_name=name,
             register_command=register_command,
@@ -228,6 +241,8 @@ class Application:
             send=send,
             subscribe=subscribe,
             execute=execute,
+            publish_state=publish_state,
+            register_action=register_action,
             config=feature_config(self.config, name),
         )
 
@@ -245,6 +260,7 @@ class Application:
         if self._shutting_down:
             return
         self._shutting_down = True
+        self.api.stop()
 
         for name, feature in self.features.items():
             shutdown = getattr(feature, "shutdown", None)
@@ -279,6 +295,7 @@ class Application:
         if not self.features:
             print("[!] No features loaded — check 'enabled' in config.toml.")
 
+        self.api.start()        # before the executor: registers its hook
         self.executor.start()
         self.console.start()
 

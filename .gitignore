@@ -182,3 +182,5 @@ pyrightconfig.json
 # Combat logs are session output, not source.
 logs/*
 !logs/.gitkeep
+# The API's local files: the bridge secret (never commit it).
+/api/

@@ -16,7 +16,7 @@ on, so they carry no feature state of their own.
 
 from __future__ import annotations
 
-from ...core.console import ask
+from ...core.console import ask, can_ask
 from ...core.executor import NoAnswer
 from .model import Combat, Combatant, Status
 
@@ -28,6 +28,13 @@ SPECIAL_CASE = "special"
 USES = {"reaction": "reaction", "legendary": "legendary_actions", "none": SPECIAL_CASE}
 
 
+def _need_console() -> None:
+    """Give up before printing a menu nobody can answer (e.g. a player's
+    action from the webapp); callers turn this into a notice."""
+    if not can_ask():
+        raise NoAnswer("it needs an answer, so type the command in the console")
+
+
 # ── Zero-HP status ──────────────────────────────────────────────────────
 
 def prompt_zero_hp_status(combatant: Combatant) -> Status:
@@ -36,6 +43,7 @@ def prompt_zero_hp_status(combatant: Combatant) -> Status:
     A combatant already dying gets a shorter menu — they can only die or
     stay dying.
     """
+    _need_console()
     if combatant.status is Status.DYING:
         print(f"[?] {combatant.name} is already DYING and took more damage.")
         print("    1. Dead")
@@ -107,6 +115,7 @@ def prompt_resource_spend(combat: Combat, actor: Combatant,
             raise ValueError(f"{actor.name} has no {label}.")
         return key
 
+    _need_console()
     options: list[tuple[str, str]] = []
     for key, label in (("reaction", "Reaction"),
                        ("legendary_actions", "Legendary Actions")):
@@ -146,6 +155,7 @@ def apply_resource_spend(actor: Combatant, resource_key: str) -> None:
 
 def resolve_ties_for(combat: Combat, initiative: int, tied: list) -> None:
     """Ask the DM to order combatants sharing an initiative value."""
+    _need_console()
     names = [c.name for c in tied]
     print(f"\n[?] Initiative tie at {initiative} between:")
     for i, name in enumerate(names, 1):

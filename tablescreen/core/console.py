@@ -54,13 +54,16 @@ class Console:
         NoAnswer at end of input, or when the running command did not come
         from the keyboard (nobody is there to answer, and the console thread
         is busy reading the next command)."""
-        if self._executor.current_source() != SHELL_SOURCE:
+        if not self.can_ask():
             raise NoAnswer("it needs an answer, so type the command in the console")
         self._events.put(("ask", prompt))
         answer = self._answers.get()
         if answer is _EOF:
             raise NoAnswer("end of input")
         return answer
+
+    def can_ask(self) -> bool:
+        return self._executor.current_source() == SHELL_SOURCE
 
     # ── Console thread ────────────────────────────────────────────────────
 
@@ -116,6 +119,13 @@ _console: Optional[Console] = None
 def install(console: Console) -> None:
     global _console
     _console = console
+
+
+def can_ask() -> bool:
+    """Whether ask() can get an answer now (a command typed at the
+    keyboard, or no console at all). Check it before printing a question's
+    options, so a command from elsewhere doesn't print a menu for nobody."""
+    return _console is None or _console.can_ask()
 
 
 def ask(prompt: str) -> str:

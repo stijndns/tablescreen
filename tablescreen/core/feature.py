@@ -78,6 +78,23 @@ class ShellServices:
     clicks. Raises ValueError for another feature's command or the source
     "shell"."""
 
+    publish_state: Callable[[Callable[[], Any], str], None]
+    """Offer a public state to the player webapp:
+    ``publish_state(snapshot, "combat/1")``. ``snapshot()`` returns plain
+    JSON data and runs on the executor thread after every command; it must
+    never show more than the table screens do (it's sent to every player).
+    Sent only when the feature is in ``[api] share`` and the state changed.
+    A no-op in effect when the API is off."""
+
+    register_action: Callable[..., None]
+    """Offer an action to the webapp:
+    ``register_action(name, fields, permission, handler)`` with ``fields`` a
+    dict of ``core.api.Field``, ``permission`` "player" or "dm" (the dm may
+    do everything), and ``handler(args, caller) -> command line``. Core checks
+    the fields first; the handler runs on the executor, checks what only the
+    feature knows (own character, whose turn) and raises ValueError with a
+    message for the player to refuse. The line runs as ``api:<user>``."""
+
     config: dict[str, Any]
     """This feature's own config section (e.g. which window it draws on).
     Only its own — not the whole config file."""
