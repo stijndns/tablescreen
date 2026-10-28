@@ -133,7 +133,8 @@ class ApiService:
         self._published[feature] = _Published(snapshot, schema)
 
     def register_action(self, feature: str, name: str, fields: dict[str, Field],
-                        permission: str, handler: Callable) -> None:
+                        permission: str, handler: Callable,
+                        reply: Optional[Callable[[str], str]] = None) -> None:
         if not protocol.NAME_RE.fullmatch(name):
             raise ValueError(f"invalid action name {name!r}")
         if permission not in PERMISSIONS:
@@ -142,7 +143,7 @@ class ApiService:
             if not protocol.NAME_RE.fullmatch(field_name):
                 raise ValueError(f"invalid field name {field_name!r}")
         self._actions[(feature, name)] = Action(feature, name, dict(fields),
-                                                permission, handler)
+                                                permission, handler, reply)
 
     def shared(self) -> list[str]:
         """Shared features that publish a state, in config order."""
@@ -287,6 +288,8 @@ class ApiService:
             # first line; later "[!]" lines are notices (e.g. for the DM).
             output = result.output.removeprefix(f"[{source}] {result.value}\n").strip()
             first = output.split("\n", 1)[0]
+            if action.reply and not caller.is_dm:
+                output = action.reply(output)       # the console's text is the DM's
             reply(not first.startswith(("[!]", "Usage")), output=output)
 
         self._executor.call(run, source=source, capture=True).add_done_callback(done)

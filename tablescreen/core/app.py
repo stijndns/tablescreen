@@ -231,8 +231,8 @@ class Application:
         def publish_state(snapshot, schema):
             self.api.publish_state(name, snapshot, schema)
 
-        def register_action(action, fields, permission, handler):
-            self.api.register_action(name, action, fields, permission, handler)
+        def register_action(action, fields, permission, handler, reply=None):
+            self.api.register_action(name, action, fields, permission, handler, reply)
 
         return ShellServices(
             feature_name=name,

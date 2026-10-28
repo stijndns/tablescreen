@@ -57,6 +57,8 @@ class Caller:
 
 # handler(args, caller) -> command line; runs on the executor thread.
 Handler = Callable[[dict, Caller], str]
+# reply(output) -> what a player is told; pure text, any thread.
+Reply = Callable[[str], str]
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,7 @@ class Action:
     fields: dict[str, Field]
     permission: str
     handler: Handler
+    reply: Optional[Reply] = None   # None: players get the command's output
 
     def check_args(self, args: dict) -> dict:
         """The args with only known fields, each checked; ValueError otherwise."""

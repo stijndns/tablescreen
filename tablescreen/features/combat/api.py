@@ -5,13 +5,15 @@ api.py — What the player webapp gets from the combat tracker.
 follows the screen's rules exactly, so it never shows more than the table
 does. The actions let a player act as their own character; the dm account
 may act for anyone. Each handler only builds an ordinary command line; the
-command's own checks and messages do the rest.
+command's own checks and messages do the rest. Players get only the first
+line of those messages, without hit point details (``player_reply``).
 
 Runs on the executor thread, like every command.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from ...core.api import Caller, Field, quote
@@ -87,11 +89,23 @@ INITIATIVE_FIELDS = {"actor": ACTOR, "value": Field(int, minimum=-10, maximum=50
 def register(services, combat: Combat) -> None:
     services.publish_state(lambda: public_state(combat), SCHEMA)
     services.register_action("action", ACTION_FIELDS, "player",
-                             lambda args, caller: action_line(combat, args, caller))
+                             lambda args, caller: action_line(combat, args, caller),
+                             reply=player_reply)
     services.register_action("end_turn", END_TURN_FIELDS, "player",
-                             lambda args, caller: end_turn_line(combat, args, caller))
+                             lambda args, caller: end_turn_line(combat, args, caller),
+                             reply=player_reply)
     services.register_action("initiative", INITIATIVE_FIELDS, "player",
-                             lambda args, caller: initiative_line(combat, args, caller))
+                             lambda args, caller: initiative_line(combat, args, caller),
+                             reply=player_reply)
+
+
+def player_reply(output: str) -> str:
+    """The first line, without its details in brackets: the console's
+    text is for the DM (``Goblin HP: 7 → 4/7`` is more than the screen's
+    "Bloodied"; zero-HP notices are instructions for the DM). The live state
+    shows the rest."""
+    first = output.split("\n", 1)[0]
+    return re.sub(r"\s+\(.*\)$", "", first)
 
 
 def _actor(combat: Combat, args: dict, caller: Caller, required: bool = True
@@ -109,27 +123,18 @@ def _actor(combat: Combat, args: dict, caller: Caller, required: bool = True
         if required:
             raise ValueError("Say who acts (actor).")
         return None
-    combatant = _find(combat, name, caller)
+    combatant = combat.get(name)
     if combatant is None:
         raise ValueError(f"{name} isn't in this combat.")
     return combatant
-
-
-def _find(combat: Combat, name: str, caller: Caller) -> Optional[Combatant]:
-    """A combatant by name; for players not a monster before its first
-    turn (its name on the screen is no handle: an answer would tell them
-    more than the table does)."""
-    c = combat.get(name)
-    if c is None or caller.is_dm or not c.hidden_initiative():
-        return c
-    return None
 
 
 def action_line(combat: Combat, args: dict, caller: Caller) -> str:
     if not combat.active:
         raise ValueError("Combat hasn't started.")
     actor = _actor(combat, args, caller)
-    target = _find(combat, args["target"], caller)
+    # Anyone on the screen; a monster before its first turn is listed too.
+    target = combat.get(args["target"])
     if target is None:
         raise ValueError(f"No combatant named {args['target']}.")
     kind = args["kind"]

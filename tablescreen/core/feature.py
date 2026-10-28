@@ -93,7 +93,10 @@ class ShellServices:
     do everything), and ``handler(args, caller) -> command line``. Core checks
     the fields first; the handler runs on the executor, checks what only the
     feature knows (own character, whose turn) and raises ValueError with a
-    message for the player to refuse. The line runs as ``api:<user>``."""
+    message for the player to refuse. The line runs as ``api:<user>``.
+    Optional ``reply=fn(output) -> text``: what a player is told instead of
+    the command's console output (which may say more than the table shows,
+    e.g. a monster's hit points); the dm gets the full output."""
 
     config: dict[str, Any]
     """This feature's own config section (e.g. which window it draws on).
