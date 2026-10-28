@@ -51,21 +51,35 @@ def encode(message: dict) -> bytes:
 
 
 class LineReader:
-    """Splits a byte stream into messages; refuses over-long lines."""
+    """Splits a byte stream into messages. A line that isn't a message, or
+    is longer than MAX_LINE, is skipped (up to its line break, so memory
+    stays bounded) and noted in ``errors`` for the caller to report; the
+    next line is read as usual. Blank lines are ignored."""
 
     def __init__(self) -> None:
         self._buffer = b""
+        self._skipping = False          # inside an over-long line
+        self.errors: list[str] = []
 
     def feed(self, data: bytes) -> list[dict]:
         self._buffer += data
         messages = []
         while b"\n" in self._buffer:
             line, self._buffer = self._buffer.split(b"\n", 1)
-            if len(line) > MAX_LINE:
-                raise ProtocolError("message too long")
-            messages.append(decode(line))
+            if self._skipping:
+                self._skipping = False  # the end of the over-long line
+            elif len(line) > MAX_LINE:
+                self.errors.append("message too long")
+            elif line.strip():
+                try:
+                    messages.append(decode(line))
+                except ProtocolError as exc:
+                    self.errors.append(str(exc))
         if len(self._buffer) > MAX_LINE:
-            raise ProtocolError("message too long")
+            if not self._skipping:
+                self.errors.append("message too long")
+            self._buffer = b""
+            self._skipping = True
         return messages
 
 
@@ -135,22 +149,31 @@ def check_caller(message: dict) -> dict:
 
 def check(message: dict) -> dict:
     """Validate a message from the gateway (after authentication). Returns
-    it with only the known fields; raises ProtocolError otherwise."""
+    it with only the known fields. Raises ProtocolError when there is
+    nothing to answer (an unknown type, an action without a usable id): the
+    message is ignored. Anything else wrong with an action comes back as
+    ``{"type": "action", "id": …, "invalid": reason}``, so that one action is
+    refused. Either way the connection stays: a bad message costs only
+    itself."""
     kind = message.get("type")
     if kind == "action":
-        args = message.get("args", {})
-        if not isinstance(args, dict) or len(args) > 16:
-            raise ProtocolError("args must be an object (at most 16 fields)")
-        for key in args:
-            _match(NAME_RE, key, "field name")
-        return {
-            "type": kind,
-            "id": _match(ID_RE, message.get("id"), "id"),
-            "feature": _match(NAME_RE, message.get("feature"), "feature"),
-            "action": _match(NAME_RE, message.get("action"), "action"),
-            "caller": check_caller(message),
-            "args": args,           # values are checked against the action's fields
-        }
+        action_id = _match(ID_RE, message.get("id"), "id")
+        try:
+            args = message.get("args", {})
+            if not isinstance(args, dict) or len(args) > 16:
+                raise ProtocolError("args must be an object (at most 16 fields)")
+            for key in args:
+                _match(NAME_RE, key, "field name")
+            return {
+                "type": kind,
+                "id": action_id,
+                "feature": _match(NAME_RE, message.get("feature"), "feature"),
+                "action": _match(NAME_RE, message.get("action"), "action"),
+                "caller": check_caller(message),
+                "args": args,       # values are checked against the action's fields
+            }
+        except ProtocolError as exc:
+            return {"type": kind, "id": action_id, "invalid": str(exc)}
     if kind == "accounts_result":
         result = {
             "type": kind,

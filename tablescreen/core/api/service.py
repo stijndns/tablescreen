@@ -247,6 +247,12 @@ class ApiService:
                 future.set_result(message)
 
     def _on_action(self, message: dict) -> None:
+        if "invalid" in message:
+            print(f"[!] api: refused an invalid action from the gateway: {message['invalid']}")
+            if self._bridge:
+                self._bridge.send({"type": "result", "id": message["id"], "ok": False,
+                                   "output": "", "error": f"Invalid request ({message['invalid']})."})
+            return
         caller = Caller(**message["caller"])
         source = f"api:{caller.user}"
 

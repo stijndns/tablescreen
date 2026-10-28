@@ -5,8 +5,14 @@ One listener thread accepts connections; each connection gets a reader
 thread (handshake, then messages) and a writer thread (an outgoing queue, so
 the executor never blocks on a slow gateway). Only one authenticated
 connection is used at a time: a new one replaces the old (a restarted
-gateway). A connection that fails the handshake or breaks the protocol is
-dropped.
+gateway).
+
+A connection is dropped only when it fails the handshake (wrong secret, no
+answer in time) or stops reading what the app sends. After the handshake,
+a bad message is reported in the console and ignored: dropping wouldn't
+protect anything (a gateway that has the secret just reconnects) but would
+cut every player off, and a gateway that keeps sending the same bad message
+would reconnect in a loop.
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ from __future__ import annotations
 import queue
 import socket
 import threading
+import traceback
 from typing import Callable, Optional
 
 from . import protocol
@@ -159,15 +166,16 @@ class Bridge:
 
         try:
             for message in pending:
-                self._on_message(protocol.check(message))
+                self._handle(message)
             while not connection.closed:
                 data = connection.sock.recv(65536)
                 if not data:
                     break
                 for message in reader.feed(data):
-                    self._on_message(protocol.check(message))
-        except protocol.ProtocolError as exc:
-            print(f"[!] api: dropping the gateway: {exc}")
+                    self._handle(message)
+                for error in reader.errors:
+                    print(f"[!] api: ignored a message from the gateway: {error}")
+                reader.errors.clear()
         except OSError:
             pass
         connection.close()
@@ -178,6 +186,18 @@ class Bridge:
         if lost:
             print("[i] api: gateway disconnected.")
             self._on_lost()
+
+    def _handle(self, message: dict) -> None:
+        try:
+            checked = protocol.check(message)
+        except protocol.ProtocolError as exc:
+            print(f"[!] api: ignored a message from the gateway: {exc}")
+            return
+        try:
+            self._on_message(checked)
+        except Exception:
+            print("[!] api: handling a message from the gateway failed:")
+            traceback.print_exc()
 
     def _handshake(self, connection: Connection, reader: protocol.LineReader) -> list[dict]:
         """Challenge and response; returns messages that arrived with it."""
@@ -190,6 +210,8 @@ class Bridge:
             if not data:
                 raise protocol.ProtocolError("closed during the handshake")
             messages = reader.feed(data)
+            if reader.errors:
+                raise protocol.ProtocolError(reader.errors[0])
         auth = messages.pop(0)
         if auth.get("type") != "auth" or not protocol.mac_matches(
                 self._secret, nonce, auth.get("mac")):
