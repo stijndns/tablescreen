@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from .protocol import ProtocolError, clean_text
+from bridge_protocol import ProtocolError, clean_text
 
 PERMISSIONS = ("player", "dm")      # who may call an action at all
 

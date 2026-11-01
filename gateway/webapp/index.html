@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tablescreen</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/common.js" defer></script>
+  <script src="/static/index.js" defer></script>
+</head>
+<body>
+  <header class="bar">
+    <h1>Tablescreen</h1>
+    <span id="app-status" class="status" hidden></span>
+  </header>
+  <main>
+    <section class="card">
+      <p id="who">Loading…</p>
+      <p id="error" class="error" hidden></p>
+      <nav class="actions">
+        <a id="login" class="button" href="/login" hidden>Log in</a>
+        <a id="password" class="button secondary" href="/password" hidden>Change password</a>
+        <button id="logout" class="secondary" type="button" hidden>Log out</button>
+      </nav>
+    </section>
+    <section id="tabs" class="card muted">
+      <p>Nothing to show yet.</p>
+    </section>
+  </main>
+</body>
+</html>

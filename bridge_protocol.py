@@ -1,5 +1,6 @@
 """
-protocol.py — The bridge's wire format, shared by the app and the gateway.
+bridge_protocol.py — The bridge's wire format, shared by the app and the
+gateway.
 
 One JSON object per line (UTF-8, ``\\n``), at most MAX_LINE bytes. The app
 listens; the gateway connects and proves it knows the shared secret:
@@ -11,10 +12,12 @@ listens; the gateway connects and proves it knows the shared secret:
 The secret itself never crosses the wire. After that the app sends
 ``state``, ``result`` and ``accounts`` (list them, link a character); the
 gateway sends ``action`` and ``accounts_result``. No password ever crosses
-the bridge: accounts are managed on the gateway's side only. Everything the gateway sends is untrusted: ``check()``
-validates each message's shape before anything looks at it.
+the bridge: accounts are managed on the gateway's side only. Everything
+the gateway sends is untrusted: ``check()`` validates each message's shape
+before anything looks at it.
 
-No imports from the rest of the app, so the gateway can use this file too.
+A top-level module with no imports from either side, so the gateway (and
+its container) can use it without the app.
 """
 
 from __future__ import annotations
@@ -38,7 +41,7 @@ MAX_TEXT = 100                  # characters in a string field
 
 
 class ProtocolError(ValueError):
-    """A message that breaks the protocol; the connection is dropped."""
+    """A message that breaks the protocol."""
 
 
 # ── Framing ─────────────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tablescreen.core.api import protocol  # noqa: E402
+import bridge_protocol as protocol  # noqa: E402
 
 accounts: dict[str, dict] = {
     "alice": {"user": "alice", "role": "player", "character": None},

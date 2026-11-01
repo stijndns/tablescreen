@@ -23,7 +23,7 @@ import threading
 import traceback
 from typing import Callable, Optional
 
-from . import protocol
+import bridge_protocol as protocol
 
 AUTH_TIMEOUT = 5.0          # seconds for the gateway to answer the challenge
 OUTGOING_LIMIT = 1000       # queued messages before a stuck gateway is dropped
@@ -119,9 +119,13 @@ class Bridge:
         threading.Thread(target=self._accept, daemon=True, name="bridge").start()
 
     def stop(self) -> None:
-        if self._server:
-            self._server.close()
-            self._server = None
+        server, self._server = self._server, None
+        if server:
+            try:
+                server.shutdown(socket.SHUT_RDWR)  # wakes accept() (Linux)
+            except OSError:
+                pass
+            server.close()
         with self._lock:
             current, self._current = self._current, None
         if current:
