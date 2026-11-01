@@ -1,25 +1,32 @@
 """
-cert.py — The gateway's HTTPS certificate: self-signed, for this PC.
+make_cert.py — The gateway's HTTPS certificate: self-signed, for this PC.
+
+    python tools/make_cert.py                       # show the current one
+    python tools/make_cert.py new                   # make a new one
+    python tools/make_cert.py new 192.168.1.77      # also for this address
 
 Browsers check that the address they connect to is in the certificate, so
 it lists this PC's host name (also as .local), its LAN IPv4 addresses,
-localhost and 127.0.0.1. Every device accepts it once; a new certificate
-means accepting it again, so it's only renewed when the PC's address
-changed or it expires.
+localhost and 127.0.0.1. Run it on the table PC, before a session: every
+device accepts the certificate once, and a new one means accepting it
+again, so it's only renewed when the PC's address changed or it expires.
 
-``cryptography`` is imported only when a certificate is made or read: the
-app runs without it otherwise.
+Run from the repository root; the files are api/cert.pem and api/key.pem
+unless --data names another folder (the gateway's --data).
 """
 
 from __future__ import annotations
 
+import argparse
 import datetime
 import ipaddress
 import os
 import socket
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
 VALID_DAYS = 825        # the longest some platforms accept
 
 
@@ -107,3 +114,60 @@ def read(cert_file: Path) -> CertInfo:
         addresses=[str(a) for a in san.get_values_for_type(x509.IPAddress)],
         expires=cert.not_valid_after_utc,
         fingerprint=":".join(digest[i:i + 2] for i in range(0, len(digest), 2)))
+
+
+def describe(info: CertInfo) -> None:
+    print(f"    Names:     {', '.join(info.names)}")
+    print(f"    Addresses: {', '.join(info.addresses)}")
+    print(f"    Expires:   {info.expires:%Y-%m-%d}")
+    print(f"    SHA-256:   {info.fingerprint}")
+    missing = sorted(lan_addresses() - set(info.addresses))
+    if missing:
+        print(f"This PC's address {', '.join(missing)} isn't in the certificate: devices"
+              f" using it will be refused. Make a new one with 'new'.")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0].strip())
+    parser.add_argument("command", nargs="?", choices=["new"],
+                        help="make a new certificate (without: show the current one)")
+    parser.add_argument("addresses", nargs="*", metavar="address",
+                        help="extra IP addresses for 'new'")
+    parser.add_argument("--data", default=str(ROOT / "api"),
+                        help="the gateway's data folder (default: api)")
+    args = parser.parse_args(argv)
+    cert_file, key_file = Path(args.data) / "cert.pem", Path(args.data) / "key.pem"
+    if args.addresses and args.command != "new":
+        parser.error("addresses only go with 'new'")
+
+    try:
+        if args.command == "new":
+            if cert_file.exists():
+                answer = input("There is a certificate already; every device will have to"
+                               " accept the new one. Replace it? [y/N] ")
+                if answer.strip().lower() not in ("y", "yes"):
+                    print("Kept the current certificate.")
+                    return
+            info = generate(cert_file, key_file, args.addresses)
+            print(f"Made a new certificate ({cert_file}, key {key_file}).")
+            print("Every device has to accept it once (the browser's warning);"
+                  " restart the gateway to use it.")
+        elif cert_file.exists():
+            info = read(cert_file)
+            print(f"The certificate in {cert_file}:")
+        else:
+            print(f"No certificate in {cert_file} yet: python tools/make_cert.py new")
+            return
+    except ImportError:
+        sys.exit("This needs the gateway's packages:"
+                 " python -m pip install -r gateway/requirements.txt")
+    except EOFError:
+        print("\nKept the current certificate.")
+        return
+    except (OSError, ValueError) as exc:
+        sys.exit(str(exc))
+    describe(info)
+
+
+if __name__ == "__main__":
+    main()

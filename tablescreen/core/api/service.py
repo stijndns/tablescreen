@@ -33,14 +33,11 @@ import bridge_protocol as protocol
 from ..completion import get_arg_parts
 from ..executor import CommandExecutor
 from ..paths import PROJECT_ROOT
-from . import cert
 from .actions import PERMISSIONS, Action, Caller, Field
 from .bridge import Bridge, Connection
 
 DEFAULT_PORT = 8765
 DEFAULT_SECRET_FILE = "api/bridge.secret"
-DEFAULT_CERT_FILE = "api/cert.pem"
-DEFAULT_KEY_FILE = "api/key.pem"
 ACCOUNTS_TIMEOUT = 5.0         # seconds to wait for the gateway's answer
 
 API_HELP = """\
@@ -49,8 +46,6 @@ API commands (the player webapp's link to the app):
   api user list                             — the gateway's accounts
   api user link <name> <character>          — the character a player acts as
   api user unlink <name>                    — no character
-  api cert                                  — the gateway's HTTPS certificate
-  api cert new [<address> …]                — make a new one for this PC
 Accounts are created and managed on the gateway's side, not here.
 """
 
@@ -62,8 +57,6 @@ class ApiConfig:
     bridge_host: str = "127.0.0.1"
     bridge_port: int = DEFAULT_PORT
     secret_file: Path = PROJECT_ROOT / DEFAULT_SECRET_FILE
-    cert_file: Path = PROJECT_ROOT / DEFAULT_CERT_FILE
-    key_file: Path = PROJECT_ROOT / DEFAULT_KEY_FILE
 
     @classmethod
     def from_config(cls, config: dict) -> "ApiConfig":
@@ -93,12 +86,9 @@ class ApiConfig:
         result.bridge_port = setting(
             "bridge_port", lambda v: isinstance(v, int) and not isinstance(v, bool)
             and 0 <= v <= 65535, DEFAULT_PORT, "a port number")
-        # Absolute paths stay absolute; relative ones are from the project.
-        for key, default in (("secret_file", DEFAULT_SECRET_FILE),
-                             ("cert_file", DEFAULT_CERT_FILE),
-                             ("key_file", DEFAULT_KEY_FILE)):
-            path = setting(key, lambda v: isinstance(v, str) and v, default, "a file path")
-            setattr(result, key, PROJECT_ROOT / path)
+        secret_file = setting("secret_file", lambda v: isinstance(v, str) and v,
+                              DEFAULT_SECRET_FILE, "a file path")
+        result.secret_file = PROJECT_ROOT / secret_file     # absolute paths stay absolute
         return result
 
 
@@ -348,8 +338,6 @@ class ApiService:
             print(API_HELP)
         elif parts[0] == "user" and len(parts) >= 2:
             self._cmd_user(parts[1].lower(), parts[2:])
-        elif parts[0] == "cert":
-            self._cmd_cert(parts[1:])
         else:
             print(API_HELP)
 
@@ -402,40 +390,6 @@ class ApiService:
         else:
             print(API_HELP)
 
-    def _cmd_cert(self, parts: list[str]) -> None:
-        """Works with the API off too: the certificate is made before the
-        first session."""
-        cert_file, key_file = self.config.cert_file, self.config.key_file
-        try:
-            if parts and parts[0].lower() == "new":
-                info = cert.generate(cert_file, key_file, parts[1:])
-                print(f"[+] Made a new certificate ({cert_file}, key {key_file}).")
-                print("    Every device has to accept it once (the browser's warning);"
-                      " restart the gateway to use it.")
-            elif not parts:
-                if not cert_file.exists():
-                    print("[i] No certificate yet: type 'api cert new'.")
-                    return
-                info = cert.read(cert_file)
-            else:
-                print(API_HELP)
-                return
-        except ImportError:
-            print("[!] Certificates need the 'cryptography' package: "
-                  "python -m pip install -r requirements.txt")
-            return
-        except (OSError, ValueError) as exc:
-            print(f"[!] {exc}")
-            return
-        print(f"    Names:     {', '.join(info.names)}")
-        print(f"    Addresses: {', '.join(info.addresses)}")
-        print(f"    Expires:   {info.expires:%Y-%m-%d}")
-        print(f"    SHA-256:   {info.fingerprint}")
-        missing = sorted(cert.lan_addresses() - set(info.addresses))
-        if missing:
-            print(f"[!] This PC's address {', '.join(missing)} isn't in the certificate;"
-                  f" devices using it will be refused. Type 'api cert new'.")
-
     @staticmethod
     def _print_answer(answer: Optional[dict]) -> None:
         if answer:
@@ -444,11 +398,9 @@ class ApiService:
     def complete_api(self, text, line, begidx, endidx) -> list[str]:
         parts = get_arg_parts(line[:begidx])
         if len(parts) == 1:
-            options = ["status", "user", "cert", "help"]
+            options = ["status", "user", "help"]
         elif len(parts) == 2 and parts[1] == "user":
             options = ["list", "link", "unlink"]
-        elif len(parts) == 2 and parts[1] == "cert":
-            options = ["new"]
         else:
             options = []
         return [o for o in options if o.startswith(text)]

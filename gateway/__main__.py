@@ -41,7 +41,7 @@ def main() -> None:
 
     if not settings.cert_file.exists() or not settings.key_file.exists():
         sys.exit(f"No certificate in {settings.cert_file} / {settings.key_file}:"
-                 f" type 'api cert new' in Tablescreen's console first.")
+                 f" make one first with 'python tools/make_cert.py new'.")
     accounts = AccountStore(settings.accounts_file)
     if not accounts.exists():
         sys.exit(f"No accounts in {settings.accounts_file}: prepare them first with"

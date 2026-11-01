@@ -36,8 +36,6 @@ share = ["combat"]          # one webapp tab per feature listed here
 bridge_host = "127.0.0.1"
 bridge_port = 8765
 secret_file = "api/bridge.secret"   # created on first start; the gateway reads it too
-cert_file = "api/cert.pem"          # the gateway's HTTPS certificate (api cert new)
-key_file = "api/key.pem"
 
 [windows]
 mainscreen = "800x600"

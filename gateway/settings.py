@@ -4,8 +4,9 @@ environment variables (for the container), else defaults that match the
 app's (run from the repository root).
 
 All local files live in one data folder, ``api/`` by default (gitignored):
-the bridge secret (made by the app), the certificate (``api cert new`` in
-the app) and the accounts database (``tools/prepare_accounts.py``).
+the bridge secret (made by the app), the certificate
+(``tools/make_cert.py``) and the accounts database
+(``tools/prepare_accounts.py``).
 """
 
 from __future__ import annotations
