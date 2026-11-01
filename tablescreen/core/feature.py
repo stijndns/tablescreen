@@ -78,13 +78,16 @@ class ShellServices:
     clicks. Raises ValueError for another feature's command or the source
     "shell"."""
 
-    publish_state: Callable[[Callable[[], Any], str], None]
+    publish_state: Callable[..., None]
     """Offer a public state to the player webapp:
-    ``publish_state(snapshot, "combat/1")``. ``snapshot()`` returns plain
-    JSON data and runs on the executor thread after every command; it must
-    never show more than the table screens do (it's sent to every player).
-    Sent only when the feature is in ``[api] share`` and the state changed.
-    A no-op in effect when the API is off."""
+    ``publish_state(snapshot, "combat/1", view=path)``. ``snapshot()``
+    returns plain JSON data and runs on the executor thread after every
+    command; it must never show more than the table screens do (it's sent to
+    every player). Sent only when the feature is in ``[api] share`` and the
+    state changed. ``view`` (optional) is the feature's default web view, a
+    JS module with ``mount(element, ctx)`` → ``{update(state), unmount()}``;
+    without one the webapp shows a generic view. A no-op in effect when the
+    API is off."""
 
     register_action: Callable[..., None]
     """Offer an action to the webapp:

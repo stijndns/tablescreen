@@ -14,12 +14,14 @@ Runs on the executor thread, like every command.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Optional
 
 from ...core.api import Caller, Field, quote
 from .model import Combat, Combatant, Type
 
 SCHEMA = "combat/1"
+VIEW = Path(__file__).resolve().parent / "web" / "view.js"     # the webapp's combat tab
 ACTION_KINDS = ("damage", "heal", "condition", "remove_condition")
 
 
@@ -87,7 +89,7 @@ INITIATIVE_FIELDS = {"actor": ACTOR, "value": Field(int, minimum=-10, maximum=50
 
 
 def register(services, combat: Combat) -> None:
-    services.publish_state(lambda: public_state(combat), SCHEMA)
+    services.publish_state(lambda: public_state(combat), SCHEMA, view=VIEW)
     services.register_action("action", ACTION_FIELDS, "player",
                              lambda args, caller: action_line(combat, args, caller),
                              reply=player_reply)

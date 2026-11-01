@@ -38,6 +38,8 @@ from .bridge import Bridge, Connection
 
 DEFAULT_PORT = 8765
 DEFAULT_SECRET_FILE = "api/bridge.secret"
+VIEW_MODES = ("auto", "webapp", "feature", "generic")    # [api.views]: which view a tab uses
+MAX_VIEW_BYTES = 512 * 1024    # a view's source travels in "ready" (one bridge line)
 ACCOUNTS_TIMEOUT = 5.0         # seconds to wait for the gateway's answer
 
 API_HELP = """\
@@ -57,6 +59,7 @@ class ApiConfig:
     bridge_host: str = "127.0.0.1"
     bridge_port: int = DEFAULT_PORT
     secret_file: Path = PROJECT_ROOT / DEFAULT_SECRET_FILE
+    views: dict[str, str] = field(default_factory=dict)     # feature → a VIEW_MODES entry
 
     @classmethod
     def from_config(cls, config: dict) -> "ApiConfig":
@@ -89,6 +92,16 @@ class ApiConfig:
         secret_file = setting("secret_file", lambda v: isinstance(v, str) and v,
                               DEFAULT_SECRET_FILE, "a file path")
         result.secret_file = PROJECT_ROOT / secret_file     # absolute paths stay absolute
+        views = section.get("views", {})
+        if not isinstance(views, dict):
+            print("[!] [api.views] must be a table; every tab uses 'auto'.")
+            views = {}
+        for name, mode in views.items():
+            if mode in VIEW_MODES:
+                result.views[name] = mode
+            else:
+                print(f"[!] [api.views] {name} = {mode!r} is invalid "
+                      f"({' | '.join(VIEW_MODES)}); using 'auto'.")
         return result
 
 
@@ -110,6 +123,7 @@ def read_or_create_secret(path: Path) -> str:
 class _Published:
     snapshot: Callable[[], Any]
     schema: str
+    view: Optional[Path] = None     # the feature's default web view (a JS module)
     version: int = 0
     last: Optional[str] = None      # JSON of the last state sent
 
@@ -128,10 +142,11 @@ class ApiService:
 
     # ── Registration (features, at build time) ────────────────────────────
 
-    def publish_state(self, feature: str, snapshot: Callable[[], Any], schema: str) -> None:
+    def publish_state(self, feature: str, snapshot: Callable[[], Any], schema: str,
+                      view: Optional[Path] = None) -> None:
         if not isinstance(schema, str) or "/" not in schema:
             raise ValueError(f"schema must look like 'combat/1', not {schema!r}")
-        self._published[feature] = _Published(snapshot, schema)
+        self._published[feature] = _Published(snapshot, schema, Path(view) if view else None)
 
     def register_action(self, feature: str, name: str, fields: dict[str, Field],
                         permission: str, handler: Callable,
@@ -229,8 +244,27 @@ class ApiService:
                            for fname, f in a.fields.items()},
             } for (feature, _), a in self._actions.items() if feature == name]
             features.append({"name": name, "schema": self._published[name].schema,
-                             "actions": actions})
+                             "actions": actions,
+                             "view": self.config.views.get(name, "auto"),
+                             "view_source": self._view_source(name)})
         return features
+
+    def _view_source(self, name: str) -> Optional[str]:
+        """The feature's web view, read on every connect (so an edited view
+        needs only a reconnect); None without one."""
+        path = self._published[name].view
+        if path is None:
+            return None
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"[!] api: {name}'s web view can't be read ({exc}); the webapp falls back.")
+            return None
+        if len(source.encode()) > MAX_VIEW_BYTES:
+            print(f"[!] api: {name}'s web view is over {MAX_VIEW_BYTES // 1024} KiB;"
+                  f" the webapp falls back.")
+            return None
+        return source
 
     def _on_lost(self) -> None:
         with self._pending_lock:

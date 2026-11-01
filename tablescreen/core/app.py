@@ -228,8 +228,8 @@ class Application:
                 raise ValueError(f"source must name the input, not {source!r}")
             self.executor.submit(line, source)
 
-        def publish_state(snapshot, schema):
-            self.api.publish_state(name, snapshot, schema)
+        def publish_state(snapshot, schema, view=None):
+            self.api.publish_state(name, snapshot, schema, view)
 
         def register_action(action, fields, permission, handler, reply=None):
             self.api.register_action(name, action, fields, permission, handler, reply)

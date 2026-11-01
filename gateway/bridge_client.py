@@ -5,17 +5,21 @@ The app listens; this client connects, answers the app's challenge with an
 HMAC of its nonce (the secret never crosses the wire) and keeps the
 connection, trying again every RETRY seconds while the app isn't running.
 
-It keeps what the app sends for the webapp (the shared features and the
-latest state of each) and answers the app's account requests (``api user
-…`` in its console) from the accounts database.
+It keeps what the app sends for the webapp (the shared features, their
+views and the latest state of each; still shown, greyed, while the app is
+away) and answers the app's account requests (``api user …`` in its
+console) from the accounts database. ``on_event(kind, detail)`` hears every
+change: "status" (connected or lost), "state" (a feature), "account" (a
+user whose character changed).
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import bridge_protocol as protocol
 
@@ -33,7 +37,9 @@ class BridgeClient:
         self.secret_file = Path(secret_file)
         self.accounts = accounts
         self.features: list[dict] = []          # from the app's "ready"
+        self.views: dict[str, str] = {}         # feature → its view's JS source
         self.states: dict[str, dict] = {}       # feature → {schema, version, data}
+        self.on_event: Callable[[str, Optional[str]], None] = lambda kind, detail: None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._ready = False
 
@@ -44,6 +50,10 @@ class BridgeClient:
     @property
     def connected(self) -> bool:
         return self._ready and self._writer is not None
+
+    def view_version(self, feature: str) -> str:
+        """Changes with the view's source, so browsers load the new one."""
+        return hashlib.sha256(self.views[feature].encode()).hexdigest()[:12]
 
     async def run(self) -> None:
         """Connect, and connect again whenever the connection is lost.
@@ -101,14 +111,17 @@ class BridgeClient:
         except (OSError, asyncio.TimeoutError, protocol.ProtocolError) as exc:
             log.warning("Bridge: %s", exc or type(exc).__name__)
         finally:
-            if self._ready:
+            was_ready = self._ready
+            if was_ready:
                 log.info("Lost the connection to the app.")
             elif self._writer is not None:
                 log.warning("The app closed the connection before it was ready:"
                             " the bridge secret doesn't match the app's?")
+            # The features and states stay: the webapp shows them greyed.
             self._writer, self._ready = None, False
-            self.features, self.states = [], {}
             writer.close()
+            if was_ready:
+                self.on_event("status", None)
 
     @staticmethod
     async def _first(reader: asyncio.StreamReader, lines: protocol.LineReader,
@@ -137,22 +150,35 @@ class BridgeClient:
         kind = message["type"]
         if kind == "ready":
             features = message.get("features")
-            self.features = features if isinstance(features, list) else []
-            self.states = {}
+            features = [f for f in features if isinstance(f, dict)
+                        and isinstance(f.get("name"), str)
+                        and protocol.NAME_RE.fullmatch(f["name"])
+                        ] if isinstance(features, list) else []
+            names = [f["name"] for f in features]
+            self.features = [{k: v for k, v in f.items() if k != "view_source"}
+                             for f in features]
+            self.views = {f["name"]: f["view_source"] for f in features
+                          if isinstance(f.get("view_source"), str)}
+            # Kept until the new ones arrive (right after "ready").
+            self.states = {k: v for k, v in self.states.items() if k in names}
             self._ready = True
-            names = [f.get("name") for f in self.features if isinstance(f, dict)]
             log.info("Connected to the app at %s; it shares %s.", self.address,
-                     ", ".join(map(str, names)) or "nothing")
+                     ", ".join(names) or "nothing")
+            self.on_event("status", None)
         elif kind == "state":
             feature = message.get("feature")
             if isinstance(feature, str):
                 self.states[feature] = {"schema": message.get("schema"),
                                         "version": message.get("version"),
                                         "data": message.get("data")}
+                self.on_event("state", feature)
         elif kind == "accounts":
             answer = await asyncio.to_thread(self.answer_accounts, message)
             if answer:
+                linked = answer.pop("linked", None)
                 await self.send(answer)
+                if linked:
+                    self.on_event("account", linked)
         elif kind == "result":
             pass                        # answers to actions: step 5
         else:
@@ -189,6 +215,8 @@ class BridgeClient:
                 answer.update(ok=True, message=f"{account.user} plays no character now.")
             else:
                 answer.update(ok=True, message=f"{account.user} now plays {character}.")
+            if answer["ok"]:
+                answer["linked"] = account.user      # for on_event; not sent
         else:
             answer["message"] = f"The gateway doesn't know the request {op!r}."
         return answer

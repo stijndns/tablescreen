@@ -129,3 +129,67 @@ button:disabled { opacity: 0.6; cursor: wait; }
 }
 
 .status.offline { color: var(--muted); }
+
+/* ── The shell: tabs and live state ── */
+
+main.wide { max-width: 760px; }
+
+.banner {
+  padding: 8px 16px;
+  text-align: center;
+  color: var(--accent-text);
+  background: var(--accent);
+  font-weight: 600;
+}
+
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.tab {
+  color: var(--text);
+  background: transparent;
+  border-color: var(--border);
+}
+
+.tab.selected {
+  color: var(--accent-text);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.stale { opacity: 0.55; filter: grayscale(0.6); }
+
+.caption { margin-top: 12px; font-size: 0.8rem; color: var(--muted); }
+
+/* ── The generic view ── */
+
+.gv-object {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+}
+
+.gv-object dt { color: var(--muted); }
+.gv-object dd { margin: 0; overflow-wrap: anywhere; }
+.gv-list { margin: 0; padding-left: 1.4em; }
+.gv-list > li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.gv-empty { color: var(--muted); }
+
+/* ── The webapp's compact combat layout (views/combat.js) ── */
+
+.cc-title { font-weight: 700; color: var(--accent); }
+.cc-list { list-style: none; margin: 0; padding: 0; }
+
+.cc-row {
+  display: grid;
+  grid-template-columns: 2.2em 1fr auto;
+  gap: 8px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cc-row.current { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+.cc-row.dim { opacity: 0.5; }
+.cc-row.you .cc-name { color: var(--accent); }
+.cc-init { color: var(--muted); text-align: right; }
+.cc-detail { color: var(--muted); text-align: right; }

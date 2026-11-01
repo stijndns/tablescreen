@@ -59,7 +59,8 @@ def main() -> None:
     log.info("The webapp: %s", ", ".join(links) or f"https://localhost:{settings.port}")
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning",
                 access_log=False, ssl_certfile=str(settings.cert_file),
-                ssl_keyfile=str(settings.key_file))
+                ssl_keyfile=str(settings.key_file),
+                ws_max_size=64 * 1024)      # pages send nothing big; pings find dead ones
 
 
 if __name__ == "__main__":

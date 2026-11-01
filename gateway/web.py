@@ -2,6 +2,9 @@
 web.py — The gateway's web side: the webapp's pages and its JSON API.
 
     GET  /, /login, /password       the webapp's pages (static files)
+    GET  /views/webapp/<name>.js    the webapp's own view for a tab (if any)
+    GET  /views/feature/<name>.js   the feature's view, as the app sent it
+    WS   /ws                        live: hello and states (see hub.py)
     GET  /api/me                    who this browser is (a guest without login)
     POST /api/login                 {user, password} → a session cookie
     POST /api/logout
@@ -10,7 +13,8 @@ web.py — The gateway's web side: the webapp's pages and its JSON API.
 A session is an HttpOnly, Secure, SameSite=Strict cookie, so scripts can't
 read it and other sites can't send it. POSTs to /api/ must be JSON, which a
 plain HTML form on another site can't send either. A player still on their
-initial password can only change it (``must_change``).
+initial password can only change it (``must_change``); the WebSocket
+refuses them. A WebSocket opened by another site's page is refused too.
 """
 
 from __future__ import annotations
@@ -18,16 +22,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .accounts import SESSION_IDLE, Account, AccountStore, password_problem
+from .hub import CLOSE_PASSWORD, Hub
 from .throttle import Throttle
+
+# Windows can map .js to text/plain in its registry; browsers refuse to
+# run a module served like that (nosniff).
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
 
 COOKIE = "tablescreen_session"
 FAIL_DELAY = 0.5                # seconds added to every failed password check
@@ -50,18 +62,20 @@ log = logging.getLogger("gateway")
 def create_app(accounts: AccountStore, bridge: Any, *, throttle: Optional[Throttle] = None,
                fail_delay: float = FAIL_DELAY,
                background: tuple[Callable[[], Awaitable[None]], ...] = ()) -> FastAPI:
-    """``bridge`` tells whether the app is connected (``.connected``);
+    """``bridge`` is the BridgeClient (or a stand-in with its attributes);
     ``background`` coroutines (the bridge client) run while the server does."""
     throttle = throttle or Throttle()
+    hub = Hub(accounts, bridge, WEBAPP / "views")
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        tasks = [asyncio.create_task(job()) for job in background]
+        tasks = [asyncio.create_task(job()) for job in (*background, hub.watch)]
         yield
         for task in tasks:
             task.cancel()
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.hub = hub
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
@@ -85,6 +99,36 @@ def create_app(accounts: AccountStore, bridge: Any, *, throttle: Optional[Thrott
     app.get("/login", include_in_schema=False)(page("login.html"))
     app.get("/password", include_in_schema=False)(page("password.html"))
     app.mount("/static", StaticFiles(directory=WEBAPP / "static"), name="static")
+    app.mount("/views/webapp", StaticFiles(directory=WEBAPP / "views"), name="overrides")
+
+    @app.get("/views/feature/{name}.js", include_in_schema=False)
+    def feature_view(name: str) -> Response:
+        source = bridge.views.get(name)
+        if source is None:
+            return Response("// no such view", status_code=404, media_type="text/javascript")
+        return Response(source, media_type="text/javascript")
+
+    # ── Live ──────────────────────────────────────────────────────────────
+
+    @app.websocket("/ws")
+    async def live(websocket: WebSocket) -> None:
+        origin = websocket.headers.get("origin")
+        if origin and urlsplit(origin).netloc != websocket.headers.get("host"):
+            await websocket.close()             # before accepting: a 403
+            return
+        token = websocket.cookies.get(COOKIE, "")
+        account = await asyncio.to_thread(accounts.session, token) if token else None
+        await websocket.accept()
+        if account is not None and account.must_change:
+            await websocket.close(CLOSE_PASSWORD)
+            return
+        page = hub.join(websocket, token if account else "", account)
+        try:
+            while True:                         # pages send nothing (actions are POSTs)
+                if (await websocket.receive())["type"] == "websocket.disconnect":
+                    break
+        finally:
+            hub.leave(page)
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -159,6 +203,7 @@ def create_app(accounts: AccountStore, bridge: Any, *, throttle: Optional[Thrott
         account, token = current(request)
         if token:
             accounts.end_session(token)
+            hub.session_ended(token)
         if account:
             log.info("%s logged out.", account.user)
         response = JSONResponse({"ok": True})
@@ -187,6 +232,7 @@ def create_app(accounts: AccountStore, bridge: Any, *, throttle: Optional[Thrott
             return error(403, "Your current password is wrong.")
         throttle.succeeded(account.user)
         await asyncio.to_thread(accounts.set_password, account.user, data["new"], token)
+        hub.password_changed(account.user, token)
         log.info("%s changed their password.", account.user)
         return JSONResponse({**accounts.get(account.user).public(),
                              "app_connected": bridge.connected})

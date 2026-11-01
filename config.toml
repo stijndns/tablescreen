@@ -37,6 +37,11 @@ bridge_host = "127.0.0.1"
 bridge_port = 8765
 secret_file = "api/bridge.secret"   # created on first start; the gateway reads it too
 
+[api.views]
+# Which view a webapp tab uses: "auto" (the webapp's own if there is one,
+# else the feature's, else a generic one) or forced "webapp" | "feature" | "generic".
+combat = "auto"
+
 [windows]
 mainscreen = "800x600"
 battlemap = "1200x900"

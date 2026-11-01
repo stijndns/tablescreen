@@ -11,21 +11,21 @@
 <body>
   <header class="bar">
     <h1>Tablescreen</h1>
-    <span id="app-status" class="status" hidden></span>
+    <span id="app-status" class="status offline">Connecting…</span>
   </header>
-  <main>
-    <section class="card">
-      <p id="who">Loading…</p>
-      <p id="error" class="error" hidden></p>
+  <div id="banner" class="banner" hidden></div>
+  <main class="wide">
+    <section class="card who">
+      <p id="who">Connecting…</p>
       <nav class="actions">
         <a id="login" class="button" href="/login" hidden>Log in</a>
         <a id="password" class="button secondary" href="/password" hidden>Change password</a>
         <button id="logout" class="secondary" type="button" hidden>Log out</button>
       </nav>
     </section>
-    <section id="tabs" class="card muted">
-      <p>Nothing to show yet.</p>
-    </section>
+    <nav id="tabbar" class="tabs" hidden></nav>
+    <div id="panels"></div>
+    <p id="empty" class="card muted" hidden>Nothing is shared yet.</p>
   </main>
 </body>
 </html>
