@@ -8,7 +8,8 @@
 // asks for ("auto" = the start): the webapp's own, the feature's, the
 // generic one. A view is a JS module: mount(element, ctx) →
 // {update(state), unmount()}; it may list the state versions it
-// understands in `schemas`.
+// understands in `schemas`. ctx: user, role, character (kept current),
+// actions (what the app offers) and send(action, args) → {ok, message}.
 
 const LEVELS = ["webapp", "feature", "generic"];
 const LABELS = {webapp: "the webapp's view", feature: "the feature's view",
@@ -179,7 +180,13 @@ function addTab(descriptor, key) {
   caption.className = "caption";
   panel.append(notice, body, caption);
   document.getElementById("panels").append(panel);
-  const tab = {key, panel, button, notice, body, caption, view: null, schema: descriptor.schema};
+  // The view's ctx: who we are (inherited, so it follows a link) plus
+  // this tab's actions.
+  const tabCtx = Object.create(ctx);
+  tabCtx.actions = descriptor.actions || [];
+  tabCtx.send = (action, args) => sendAction(name, action, args);
+  const tab = {key, panel, button, notice, body, caption, view: null, schema: descriptor.schema,
+               ctx: tabCtx};
   tabs.set(name, tab);
   loadView(descriptor, tab);
 }
@@ -226,7 +233,7 @@ async function loadView(descriptor, tab) {
       }
       if (tab.removed) return;
       tab.body.replaceChildren();
-      tab.view = module.mount(tab.body, ctx);
+      tab.view = module.mount(tab.body, tab.ctx);
       tab.caption.textContent = `${descriptor.name} · ${NAMES[level]}`;
       if (notes.length) {
         tab.notice.textContent = `${notes.join(" ")} Showing ${LABELS[level]}.`;
@@ -253,6 +260,17 @@ function refresh(name, tab) {
     tab.notice.textContent = "This view failed to show the latest state.";
     tab.notice.hidden = false;
   }
+}
+
+// A player's action; the gateway and then the app check it. Never throws.
+async function sendAction(feature, action, args) {
+  const path = `/api/actions/${encodeURIComponent(feature)}/${encodeURIComponent(action)}`;
+  const {ok, status, data} = await api(path, args || {});
+  if (status === 401) {
+    location.replace("/login");
+  }
+  if (ok) return {ok: Boolean(data.ok), message: data.message || ""};
+  return {ok: false, message: data.error || "Something went wrong."};
 }
 
 function capital(text) {

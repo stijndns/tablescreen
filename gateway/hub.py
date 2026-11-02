@@ -118,10 +118,12 @@ class Hub:
             name = feature["name"]
             webapp = self.overrides / f"{name}.js"
             mode = feature.get("view")
+            actions = feature.get("actions")
             tabs.append({
                 "name": name,
                 "schema": feature.get("schema"),
                 "view": mode if mode in VIEW_MODES else "auto",
+                "actions": actions if isinstance(actions, list) else [],
                 "views": {
                     "webapp": f"/views/webapp/{name}.js" if webapp.is_file() else None,
                     "feature": (f"/views/feature/{name}.js?v={self.bridge.view_version(name)}"

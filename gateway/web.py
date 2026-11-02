@@ -5,6 +5,7 @@ web.py — The gateway's web side: the webapp's pages and its JSON API.
     GET  /views/webapp/<name>.js    the webapp's own view for a tab (if any)
     GET  /views/feature/<name>.js   the feature's view, as the app sent it
     WS   /ws                        live: hello and states (see hub.py)
+    POST /api/actions/<f>/<action>  a player's action: {field: value, …}
     GET  /api/me                    who this browser is (a guest without login)
     POST /api/login                 {user, password} → a session cookie
     POST /api/logout
@@ -15,14 +16,21 @@ read it and other sites can't send it. POSTs to /api/ must be JSON, which a
 plain HTML form on another site can't send either. A player still on their
 initial password can only change it (``must_change``); the WebSocket
 refuses them. A WebSocket opened by another site's page is refused too.
+
+An action is checked here only as far as the gateway knows (logged in,
+the table connected, an action the app offers, dm-only actions for the
+dm, the rate limit); the app checks everything again with the game's
+rules, and its answer is the reply.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import mimetypes
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
@@ -34,7 +42,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .accounts import SESSION_IDLE, Account, AccountStore, password_problem
 from .hub import CLOSE_PASSWORD, Hub
-from .throttle import Throttle
+from .throttle import RateLimit, Throttle
 
 # Windows can map .js to text/plain in its registry; browsers refuse to
 # run a module served like that (nosniff).
@@ -43,6 +51,8 @@ mimetypes.add_type("text/css", ".css")
 
 COOKIE = "tablescreen_session"
 FAIL_DELAY = 0.5                # seconds added to every failed password check
+MAX_ACTION_BYTES = 16 * 1024    # an action's JSON body
+MARKER = re.compile(r"^\[[+!i]\] ", re.MULTILINE)    # the console's [+]/[!]/[i]
 WEBAPP = Path(__file__).resolve().parent / "webapp"
 
 HEADERS = {
@@ -60,11 +70,12 @@ log = logging.getLogger("gateway")
 
 
 def create_app(accounts: AccountStore, bridge: Any, *, throttle: Optional[Throttle] = None,
-               fail_delay: float = FAIL_DELAY,
+               rate_limit: Optional[RateLimit] = None, fail_delay: float = FAIL_DELAY,
                background: tuple[Callable[[], Awaitable[None]], ...] = ()) -> FastAPI:
     """``bridge`` is the BridgeClient (or a stand-in with its attributes);
     ``background`` coroutines (the bridge client) run while the server does."""
     throttle = throttle or Throttle()
+    rate_limit = rate_limit or RateLimit()
     hub = Hub(accounts, bridge, WEBAPP / "views")
 
     @asynccontextmanager
@@ -99,7 +110,9 @@ def create_app(accounts: AccountStore, bridge: Any, *, throttle: Optional[Thrott
     app.get("/login", include_in_schema=False)(page("login.html"))
     app.get("/password", include_in_schema=False)(page("password.html"))
     app.mount("/static", StaticFiles(directory=WEBAPP / "static"), name="static")
-    app.mount("/views/webapp", StaticFiles(directory=WEBAPP / "views"), name="overrides")
+    # The webapp's own views; the folder may hold none.
+    app.mount("/views/webapp", StaticFiles(directory=WEBAPP / "views", check_dir=False),
+              name="overrides")
 
     @app.get("/views/feature/{name}.js", include_in_schema=False)
     def feature_view(name: str) -> Response:
@@ -236,5 +249,44 @@ def create_app(accounts: AccountStore, bridge: Any, *, throttle: Optional[Thrott
         log.info("%s changed their password.", account.user)
         return JSONResponse({**accounts.get(account.user).public(),
                              "app_connected": bridge.connected})
+
+    @app.post("/api/actions/{feature}/{action}")
+    async def act(feature: str, action: str, request: Request) -> Response:
+        account, _ = current(request)
+        if account is None:
+            return error(401, "Log in first.")
+        if account.must_change:
+            return error(403, "Change your password first.")
+        body = await request.body()
+        if len(body) > MAX_ACTION_BYTES:
+            return error(413, "That's too much.")
+        try:
+            args = json.loads(body or b"{}")
+        except ValueError:
+            args = None
+        if not isinstance(args, dict):
+            return error(400, "Send the action's fields as a JSON object.")
+        wait = rate_limit.allow(account.user)
+        if wait:
+            return error(429, f"Slow down: try again in {math.ceil(wait)} s.")
+        if not bridge.connected:
+            return error(503, "The table is offline.")
+        offered = next((a for f in bridge.features if f["name"] == feature
+                        for a in f.get("actions", []) if a.get("name") == action), None)
+        if offered is None:
+            return error(404, "There is no such action.")
+        if offered.get("permission") == "dm" and account.role != "dm":
+            return error(403, "Only the game master can do that.")
+        caller = {"user": account.user, "role": account.role, "character": account.character}
+        try:
+            result = await bridge.action(feature, action, caller, args)
+        except ConnectionError:
+            return error(503, "The table is offline.")
+        except TimeoutError:
+            return error(504, "The table didn't answer.")
+        message = MARKER.sub("", result["error"] or result["output"]).strip()
+        log.info("%s: %s %s → %s", account.user, feature, action,
+                 "done" if result["ok"] else f"refused ({message})")
+        return JSONResponse({"ok": result["ok"], "message": message})
 
     return app

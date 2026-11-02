@@ -7,7 +7,8 @@ connection, trying again every RETRY seconds while the app isn't running.
 
 It keeps what the app sends for the webapp (the shared features, their
 views and the latest state of each; still shown, greyed, while the app is
-away) and answers the app's account requests (``api user …`` in its
+away), sends players' actions and waits for the app's answer (``action``),
+and answers the app's account requests (``api user …`` in its
 console) from the accounts database. ``on_event(kind, detail)`` hears every
 change: "status" (connected or lost), "state" (a feature), "account" (a
 user whose character changed).
@@ -18,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import secrets
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -27,6 +29,7 @@ from .accounts import AccountStore
 
 RETRY = 2.0                 # seconds between connection attempts
 HANDSHAKE_TIMEOUT = 5.0
+ACTION_TIMEOUT = 5.0        # seconds to wait for the app's answer to an action
 
 log = logging.getLogger("gateway")
 
@@ -42,6 +45,7 @@ class BridgeClient:
         self.on_event: Callable[[str, Optional[str]], None] = lambda kind, detail: None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._ready = False
+        self._pending: dict[str, asyncio.Future] = {}      # actions by id
 
     @property
     def address(self) -> str:
@@ -119,6 +123,10 @@ class BridgeClient:
                             " the bridge secret doesn't match the app's?")
             # The features and states stay: the webapp shows them greyed.
             self._writer, self._ready = None, False
+            pending, self._pending = self._pending, {}
+            for future in pending.values():
+                if not future.done():
+                    future.set_exception(ConnectionError("the table went offline"))
             writer.close()
             if was_ready:
                 self.on_event("status", None)
@@ -135,6 +143,22 @@ class BridgeClient:
             if lines.errors:
                 raise protocol.ProtocolError(lines.errors[0])
         return pending.pop(0)
+
+    async def action(self, feature: str, action: str, caller: dict, args: dict) -> dict:
+        """Send a player's action and wait for the app's answer:
+        {ok, output, error}. ConnectionError when the app isn't (or stops
+        being) connected, TimeoutError when it doesn't answer in time."""
+        if not self.connected:
+            raise ConnectionError("the table is offline")
+        action_id = secrets.token_hex(8)
+        future = asyncio.get_running_loop().create_future()
+        self._pending[action_id] = future
+        try:
+            await self.send({"type": "action", "id": action_id, "feature": feature,
+                             "action": action, "caller": caller, "args": args})
+            return await asyncio.wait_for(future, ACTION_TIMEOUT)
+        finally:
+            self._pending.pop(action_id, None)
 
     async def send(self, message: dict) -> bool:
         writer = self._writer
@@ -180,7 +204,13 @@ class BridgeClient:
                 if linked:
                     self.on_event("account", linked)
         elif kind == "result":
-            pass                        # answers to actions: step 5
+            future = self._pending.get(message.get("id"))
+            if future is not None and not future.done():
+                future.set_result({
+                    "ok": message.get("ok") is True,
+                    "output": message.get("output") if isinstance(message.get("output"), str) else "",
+                    "error": message.get("error") if isinstance(message.get("error"), str) else "",
+                })
         else:
             log.warning("Ignored a %r message from the app.", kind)
 

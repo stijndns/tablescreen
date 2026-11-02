@@ -175,21 +175,9 @@ main.wide { max-width: 760px; }
 .gv-list > li { padding: 4px 0; border-bottom: 1px solid var(--border); }
 .gv-empty { color: var(--muted); }
 
-/* ── The webapp's compact combat layout (views/combat.js) ── */
-
-.cc-title { font-weight: 700; color: var(--accent); }
-.cc-list { list-style: none; margin: 0; padding: 0; }
-
-.cc-row {
-  display: grid;
-  grid-template-columns: 2.2em 1fr auto;
-  gap: 8px;
-  padding: 4px 6px;
-  border-bottom: 1px solid var(--border);
-}
-
-.cc-row.current { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
-.cc-row.dim { opacity: 0.5; }
-.cc-row.you .cc-name { color: var(--accent); }
-.cc-init { color: var(--muted); text-align: right; }
-.cc-detail { color: var(--muted); text-align: right; }
+.gv-actions { display: grid; gap: 12px; margin-top: 16px; }
+.gv-action { background: var(--bg); }
+.gv-action h3 { margin: 0 0 8px; font-size: 1rem; }
+.gv-action select { padding: 10px 12px; font: inherit; color: var(--text); background: var(--card);
+  border: 1px solid var(--border); border-radius: 8px; }
+.gv-result { margin: 8px 0 0; font-weight: 600; }
