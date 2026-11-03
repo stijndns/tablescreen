@@ -1,0 +1,4 @@
+# Docker reads these on Linux: a CR at the end of a RUN line breaks it.
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+compose.yaml text eol=lf

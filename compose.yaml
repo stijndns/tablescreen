@@ -1,0 +1,36 @@
+# The gateway in a container, started for a session from this folder:
+#   docker compose up -d --build      before (--build picks up an update)
+#   docker compose down               after
+# Tablescreen itself runs on this PC as usual, with [api] enabled; the
+# gateway reaches its bridge at host.docker.internal (Docker Desktop's name
+# for this PC). The api/ folder is the gateway's data: the bridge secret,
+# the certificate (tools/make_cert.py) and the accounts
+# (tools/prepare_accounts.py). The TABLESCREEN_* variables are for
+# tools/container_smoke.py; the defaults are for a session.
+name: tablescreen
+
+services:
+  gateway:
+    build: .
+    image: tablescreen-gateway
+    ports:
+      - "${TABLESCREEN_PORT:-8443}:8443"
+    volumes:
+      - type: bind              # the long form: a Windows path has a colon of its own
+        source: "${TABLESCREEN_DATA:-./api}"
+        target: /data
+    environment:
+      TABLESCREEN_GATEWAY_BRIDGE_HOST: "${TABLESCREEN_BRIDGE_HOST:-host.docker.internal}"
+      TABLESCREEN_GATEWAY_BRIDGE_PORT: "${TABLESCREEN_BRIDGE_PORT:-8765}"
+      TABLESCREEN_GATEWAY_PUBLIC_PORT: "${TABLESCREEN_PORT:-8443}"
+    # Locked down: the container is the part that might be compromised.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 128
+    restart: "no"               # only when started for a session

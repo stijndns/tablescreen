@@ -1,0 +1,5 @@
+# Only what the image needs; above all never api/ (secret, key, accounts).
+*
+!bridge_protocol.py
+!gateway/
+**/__pycache__

@@ -5,6 +5,7 @@ python -m gateway [options] — Start the gateway (see --help).
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import sys
 
@@ -55,8 +56,14 @@ def main() -> None:
                           settings.secret_file, accounts)
     app = create_app(accounts, bridge, background=(bridge.run,))
 
-    links = [f"https://{a}:{settings.port}" for a in lan_addresses()]
-    log.info("The webapp: %s", ", ".join(links) or f"https://localhost:{settings.port}")
+    if os.environ.get("TABLESCREEN_GATEWAY_IN_CONTAINER"):
+        # Its own addresses mean nothing outside; the PC's port is compose's.
+        port = os.environ.get("TABLESCREEN_GATEWAY_PUBLIC_PORT", str(settings.port))
+        log.info("The webapp: https://<this PC's LAN address>:%s (in a container;"
+                 " the bridge is %s:%s).", port, settings.bridge_host, settings.bridge_port)
+    else:
+        links = [f"https://{a}:{settings.port}" for a in lan_addresses()]
+        log.info("The webapp: %s", ", ".join(links) or f"https://localhost:{settings.port}")
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning",
                 access_log=False, ssl_certfile=str(settings.cert_file),
                 ssl_keyfile=str(settings.key_file),
