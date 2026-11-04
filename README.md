@@ -16,6 +16,12 @@ The application is split into independent features. Each one can be switched on 
 
 How the features fit together, and how to write a new one, is described in [the core documentation](tablescreen/core/README.md).
 
+## Player webapp
+
+Players can also follow the game on their own phone, tablet or laptop and act as their own character: the combat tab shows the turn order live, and lets them enter their initiative, deal damage, heal, change conditions and end their turn. Their actions run as ordinary commands, echoed in the console with their name. Guests can watch without logging in.
+
+The webapp is served by a separate program, the gateway, which runs in a Docker container on the table PC during a session and talks to Tablescreen over a local, secret-protected connection. It is off unless enabled. Setting it up, the accounts and the first login are described in [the setup guide](docs/webapp_setup.md).
+
 ## Requirements
 
 - Python 3.14. The code uses features from Python 3.11 onwards, but development and testing are done on 3.14.
@@ -31,6 +37,8 @@ The Python dependencies are listed in `requirements.txt`:
 | `screeninfo`  | Detecting monitors, for fullscreen on the right screen and for grid calibration                                                        |
 | `av` (PyAV)   | Decoding animated `.webm` battlemap backdrops. FFmpeg is bundled with the package; nothing else needs to be installed.                 |
 | `pyreadline3` | Tab completion in the shell. Windows only; installed automatically there and skipped elsewhere.                                        |
+
+The player webapp additionally needs [Docker Desktop](https://www.docker.com/products/docker-desktop/), and the gateway's packages (`gateway/requirements.txt`) on the PC for its setup tools; see [the setup guide](docs/webapp_setup.md).
 
 Tkinter, used for all windows, is part of the standard Python installation on Windows. On some Linux distributions it is a separate package (for example `python3-tk`).
 
@@ -101,12 +109,17 @@ aoe_hatching = true         # hatch lines inside areas of effect (false: outline
 [windows]
 mainscreen = "800x600"
 battlemap = "1200x900"
+
+[api]
+enabled = false             # the player webapp
+share = ["combat"]
 ```
 
 - `enabled` lists the features to load. Anything not listed is not imported.
 - Each feature names the window it draws on. Features that share a window take turns: whichever showed something last is visible. That is how the combat screen replaces the image on the main screen, and how an image takes its place again afterwards.
 - `[windows]` sets the default size of each window, in pixels. The `restore` commands return a window to this size. The battlemap mirror opens at the battlemap's size and has no entry of its own.
 - The battlemap settings are explained in the [battlemap documentation](tablescreen/features/battlemap/README.md#calibration).
+- `[api]` turns on the player webapp and lists the features it shares; all its settings are in the [core documentation](tablescreen/core/README.md#configuration).
 
 Invalid values are reported when the application starts and replaced by their defaults; a typo never stops a feature from loading.
 
@@ -124,7 +137,13 @@ On Windows, the application runs in per-monitor DPI-aware mode. Window sizes in 
 | `config.toml`               | Configuration                                                                                     |
 | `tablescreen/core/`         | The application framework: shell, windows, message bus                                            |
 | `tablescreen/features/`     | One package per feature                                                                           |
+| `api/`                      | The player webapp's private files: the bridge secret, the certificate and the accounts. Never committed. |
+| `gateway/`                  | The player webapp's server ([documentation](gateway/README.md))                                   |
+| `bridge_protocol.py`        | The wire format between Tablescreen and the gateway                                               |
+| `Dockerfile`, `compose.yaml` | The gateway's container                                                                          |
+| `tools/`                    | Setup and test tools for the webapp: certificate, accounts, container check                      |
+| `docs/`                     | The webapp setup guide and screenshots                                                            |
 
 All file names given to commands are relative to the matching folder, so `show tavern.jpg` shows `assets/images/tavern.jpg`. Tab completion works for file names, including subfolders.
 
-`.webm` files and the contents of `logs/` are excluded from version control.
+`.webm` files, the contents of `logs/` and the `api/` folder are excluded from version control.

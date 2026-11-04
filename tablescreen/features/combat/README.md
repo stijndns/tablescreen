@@ -30,7 +30,7 @@ combat end
 
 An initiative that isn't known yet can be entered as `?`: `combat add Aria ? pc 52`, or `?` (or just Enter) at the initiative question of `combat import`. It shows as `?` and sorts last.
 
-Combat never starts with an initiative missing. `combat start` then waits for them instead: the shell lists who is missing, and `combat initiative <name> <value>` enters each value. When the last one is in, combat starts by itself. Ties are still the game master's: the shell asks for their order as usual. If the last value didn't come from the console (in the future, from a player), the shell names the ties and `combat start` sets their order and begins. `combat start` again lists who is still missing; `combat end` stops waiting and keeps the roster.
+Combat never starts with an initiative missing. `combat start` then waits for them instead: the shell lists who is missing, and `combat initiative <name> <value>` enters each value. When the last one is in, combat starts by itself. Ties are still the game master's: the shell asks for their order as usual. If the last value didn't come from the console (a player entered it in the webapp), the shell names the ties and `combat start` sets their order and begins. `combat start` again lists who is still missing; `combat end` stops waiting and keeps the roster.
 
 `combat initiative <name> <value>` also corrects an initiative. Before combat, that is always possible. During combat, a change is only accepted at the start of a round, while its first combatant is active, so the turn order never changes in the middle of a round. If the change gives the round a different first combatant, that combatant's turn starts. A combatant added during combat with `?` can get their initiative at any time and joins at the start of the next round once it is in.
 
@@ -101,7 +101,7 @@ Following the 5e rules, temporary hit points do not stack: a grant only takes ef
 
 The combat screen shows temporary hit points of player characters next to their hit points (`23/30 HP +6`). For NPCs and monsters, they are not shown to the players.
 
-When a combatant drops to 0 hit points, the shell asks whether they are dead, dying or incapacitated. A dying combatant who takes more damage can be marked dead or stay dying. A dying or incapacitated combatant who is healed above 0 becomes active again; a dead one stays dead, even when healed. When the change wasn't typed in the console (in the future, a player's action), the shell can't ask: it prints a notice instead and the status is left to the game master.
+When a combatant drops to 0 hit points, the shell asks whether they are dead, dying or incapacitated. A dying combatant who takes more damage can be marked dead or stay dying. A dying or incapacitated combatant who is healed above 0 becomes active again; a dead one stays dead, even when healed. When the change wasn't typed in the console (a player's action from the webapp), the shell can't ask: it prints a notice instead and the status is left to the game master.
 
 `combat status <name> <status>` sets a status directly: `active`, `dying`, `dead` or `incapacitated`. It is also the way to bring a dead combatant back.
 
@@ -123,6 +123,30 @@ combat action Goblin-A damage Aria 4 uses reaction
 ```
 
 A resource the actor doesn't have is refused. On the actor's own turn, `uses` is ignored and nothing is spent.
+
+## Playing from the webapp
+
+With the player webapp running (see [the setup guide](../../../docs/webapp_setup.md)) and `combat` in `[api] share`, players follow the combat on their own device and act as their own character. Their account is linked to the character in the console: `api user link alice Aria`.
+
+The combat tab shows what the combat screen shows, following the same rules: player characters' hit points, everyone else's descriptive state, monsters greyed out with their initiative hidden until their first turn, reactions, legendary actions and conditions. Portraits are not shown. Nothing is sent before combat, except while initiatives are being rolled.
+
+What a player can do:
+
+- **Enter their initiative** while it is missing: during the rolling initiative phase, or after being added with `?` during combat. Correcting it afterwards is up to the game master.
+- **Act on any combatant** on the screen, including monsters before their first turn: damage (with an optional damage type), healing, adding a condition, removing one. Healing yourself is an action on your own row. Out of turn, the webapp asks what the action uses: their Reaction, a legendary action, or nothing.
+- **End their turn**, on their own turn only.
+
+Each of these becomes an ordinary command, run as if the game master had typed it and echoed in the console with the player's name:
+
+```
+[api:alice] combat action Aria damage Goblin-B 4 fire uses reaction
+[+] Aria → damage → Goblin-B: 4 fire  (Goblin-B HP: 7 → 3/7)
+    [+] Aria spent a Reaction. (Reaction: 1 → 0/1)
+```
+
+So the game master sees everything, and every rule of the typed command applies: combat must be running, an out-of-turn action must say what it uses, a missing resource is refused. A player can only act as their own character. They get the first line of the reply, without the hit point details; when a combatant drops to 0 hit points, the console notes it for the game master to set the status.
+
+An account with the dm role acts for any combatant ("Acting as" on the combat tab) and gets the full reply. The game master normally keeps playing from the console; both work side by side.
 
 ## Resources and conditions
 
@@ -211,6 +235,8 @@ The shortcuts (`next`, `hp`, `temphp`, `maxhp`, `resource`, `condition` and `pag
 | `prompts.py` | Questions asked in the shell (initiative ties, zero hit points, resources spent) |
 | `persistence.py` | Export and import of rosters as JSON |
 | `log.py` | The combat log |
+| `api.py` | What the player webapp gets: the public state (`combat/1`) and the players' actions |
+| `web/view.js` | The combat tab in the player webapp |
 | `model/combat.py` | The encounter: combatants, turn order, rounds |
 | `model/combatant.py` | A single combatant with hit points, resources, conditions and status |
 | `views/combat_view.py` | The combat screen and its pages |
