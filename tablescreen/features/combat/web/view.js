@@ -4,7 +4,8 @@
 //
 // A webapp view module: mount(element, ctx) → {update(state), unmount()},
 // ctx = {user, role, character, actions, send(action, args)}. Styles use the
-// webapp's CSS variables.
+// webapp's CSS variables (--health-*, --type-* when the webapp sets them, with
+// fallbacks for a dark background).
 //
 // Actions (checked again by the app, which has the last word):
 //   * tap a combatant: damage, heal, add or remove a condition; out of turn
@@ -33,52 +34,55 @@ const RESULT_MS = 8000;     // how long the result of a top-bar action stays
 const CSS = `
 .cv-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px;
   margin-bottom: 12px; }
-.cv-round { font-size: 1.15rem; font-weight: 700; color: var(--accent); }
-.cv-turn { color: var(--muted); }
+.cv-round { font-size: 1.15rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--accent); }
+.cv-turn { font-weight: 700; color: var(--text); }
 .cv-empty { color: var(--muted); margin: 0; }
 .cv-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .cv-row { display: grid; grid-template-columns: 2.6em 1fr auto; gap: 2px 10px;
   align-items: center; padding: 8px 10px; border: 1px solid var(--border);
   border-left: 4px solid var(--cv-accent, var(--border)); border-radius: 8px;
   background: var(--bg); }
-.cv-row.pc { --cv-accent: #4493f8; }
-.cv-row.npc { --cv-accent: #bc8cff; }
-.cv-row.monster { --cv-accent: #ff7b72; }
+.cv-row.pc { --cv-accent: var(--type-pc, #4493f8); }
+.cv-row.npc { --cv-accent: var(--type-npc, #bc8cff); }
+.cv-row.monster { --cv-accent: var(--type-monster, #ff7b72); }
 .cv-row.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent);
   background: var(--card); }
-.cv-row.dim { opacity: 0.5; --cv-accent: var(--border); }
+.cv-row.dim { opacity: 0.62; --cv-accent: var(--border); }
 .cv-row.tappable { cursor: pointer; }
 .cv-row.open { border-color: var(--text); }
 .cv-init { grid-row: span 2; font-size: 1.2rem; font-weight: 700; text-align: center;
   color: var(--muted); }
 .cv-row.current .cv-init { color: var(--accent); }
-.cv-name { font-weight: 600; overflow-wrap: anywhere; }
+.cv-name { font-weight: 700; overflow-wrap: anywhere; }
 .cv-tag { display: inline-block; margin-left: 6px; padding: 0 6px; font-size: 0.75rem;
-  font-weight: 600; border: 1px solid currentColor; border-radius: 999px;
+  font-weight: 700; border: 1px solid currentColor; border-radius: 999px;
   color: var(--muted); vertical-align: 1px; }
 .cv-tag.you { color: var(--accent); }
 .cv-hp { font-weight: 700; text-align: right; white-space: nowrap; }
-.cv-hp.green { color: #3fb950; } .cv-hp.yellow { color: #d29922; }
-.cv-hp.orange { color: #e3652b; } .cv-hp.red { color: #f85149; }
+.cv-hp.green { color: var(--health-green, #3fb950); }
+.cv-hp.yellow { color: var(--health-yellow, #d29922); }
+.cv-hp.orange { color: var(--health-orange, #e3652b); }
+.cv-hp.red { color: var(--health-red, #f85149); }
 .cv-hp.dead { color: var(--muted); }
 .cv-extra { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px 12px;
-  font-size: 0.85rem; color: var(--muted); }
+  font-size: 0.85rem; font-weight: 700; color: var(--muted); }
 .cv-conditions { color: var(--accent); }
-.cv-waiting { margin: 0 0 12px; color: var(--accent); }
+.cv-waiting { margin: 0 0 12px; font-weight: 700; color: var(--accent); }
 .cv-controls { display: grid; gap: 8px; margin-bottom: 12px; }
 .cv-controls:empty { display: none; }
 .cv-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
 .cv-line input { width: 6em; }
 .cv-line select { padding: 8px; font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--border); border-radius: 8px; }
-.cv-note { margin: 0; color: var(--muted); }
-.cv-result { margin: 0; font-weight: 600; }
+.cv-note { margin: 0; font-weight: 600; color: var(--muted); }
+.cv-result { margin: 0; font-weight: 700; }
 .cv-result.ok { color: var(--success); } .cv-result.err { color: var(--error); }
 .cv-panel { list-style: none; padding: 12px; border: 1px solid var(--text);
   border-radius: 8px; background: var(--card); }
 .cv-panel-form { display: grid; gap: 10px; }
 .cv-panel-head { display: flex; justify-content: space-between; align-items: center;
-  gap: 8px; margin: 0; font-weight: 600; }
+  gap: 8px; margin: 0; font-weight: 700; }
 .cv-seg { display: flex; flex-wrap: wrap; gap: 6px; }
 .cv-seg button { color: var(--text); background: transparent; border-color: var(--border);
   padding: 8px 12px; }
@@ -88,7 +92,7 @@ const CSS = `
 .cv-fields input { flex: 1 1 8em; }
 .cv-fields select { flex: 1 1 8em; padding: 10px 12px; font: inherit; color: var(--text);
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px; }
-.cv-uses-label { margin: 0; color: var(--accent); font-weight: 600; }
+.cv-uses-label { margin: 0; color: var(--accent); font-weight: 700; }
 `;
 
 let sheet = null;

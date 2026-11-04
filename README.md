@@ -147,3 +147,8 @@ On Windows, the application runs in per-monitor DPI-aware mode. Window sizes in 
 All file names given to commands are relative to the matching folder, so `show tavern.jpg` shows `assets/images/tavern.jpg`. Tab completion works for file names, including subfolders.
 
 `.webm` files, the contents of `logs/` and the `api/` folder are excluded from version control.
+
+## Credits
+
+The parchment behind the player webapp's pages is derived from a texture by [My Free Textures](https://www.myfreetextures.com/) (resized and toned).
+The webapp's columns and cornice are cut from the drawing "Frame with columns" on Wikimedia Commons, which is in the public domain (CC0).

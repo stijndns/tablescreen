@@ -15,7 +15,7 @@ Setting it up and running it is described in [the setup guide](../docs/webapp_se
 | `bridge_client.py` | `BridgeClient`: connects to Tablescreen, keeps the shared features, views and states, sends actions, answers `api user …` |
 | `hub.py` | `Hub`: one entry per open page, pushing `hello` and `state` messages |
 | `web.py` | The FastAPI app: pages, the JSON API, the WebSocket, security headers |
-| `webapp/` | The webapp: the pages, `static/` (the shell, styles, the generic view) and `views/` (the webapp's own views) |
+| `webapp/` | The webapp: the pages, `static/` (the shell, styles, the generic view), `static/theme/` (the look's images: parchment, cornice, column pieces) and `views/` (the webapp's own views) |
 | `requirements.txt` | The gateway's packages; the container installs only these |
 
 ## The bridge, from this side

@@ -9,23 +9,35 @@
   <script src="/static/index.js" defer></script>
 </head>
 <body>
-  <header class="bar">
-    <h1>Tablescreen</h1>
-    <span id="app-status" class="status offline">Connecting…</span>
-  </header>
-  <div id="banner" class="banner" hidden></div>
-  <main class="wide">
-    <section class="card who">
-      <p id="who">Connecting…</p>
-      <nav class="actions">
-        <a id="login" class="button" href="/login" hidden>Log in</a>
-        <a id="password" class="button secondary" href="/password" hidden>Change password</a>
-        <button id="logout" class="secondary" type="button" hidden>Log out</button>
-      </nav>
-    </section>
-    <nav id="tabbar" class="tabs" hidden></nav>
-    <div id="panels"></div>
-    <p id="empty" class="card muted" hidden>Nothing is shared yet.</p>
-  </main>
+  <div class="temple">
+    <div class="cornice" aria-hidden="true"></div>
+    <div class="column left" aria-hidden="true"><span class="cap"></span><span class="shaft"></span><span class="base"></span></div>
+    <div class="column right" aria-hidden="true"><span class="cap"></span><span class="shaft"></span><span class="base"></span></div>
+    <header class="bar">
+      <h1>Tablescreen</h1>
+      <span id="app-status" class="status offline">Connecting…</span>
+    </header>
+    <div id="banner" class="banner" hidden></div>
+    <main class="wide">
+      <section class="card who">
+        <p id="who">Connecting…</p>
+        <nav class="actions">
+          <a id="login" class="button" href="/login" hidden>Log in</a>
+          <a id="password" class="button secondary" href="/password" hidden>Change password</a>
+          <button id="logout" class="secondary" type="button" hidden>Log out</button>
+        </nav>
+      </section>
+      <nav id="tabbar" class="tabs" hidden></nav>
+      <div id="panels"></div>
+      <p id="empty" class="card muted" hidden>Nothing is shared yet.</p>
+    </main>
+  </div>
+  <!-- Roughens the parchment's outline (style.css, .card::before). -->
+  <svg class="defs" aria-hidden="true" focusable="false">
+    <filter id="torn" x="-3%" y="-3%" width="106%" height="106%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="3" seed="7" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="9" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </svg>
 </body>
 </html>
