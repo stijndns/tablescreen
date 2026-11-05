@@ -29,6 +29,7 @@ class Settings:
     data: Path
     cert_file: Path
     key_file: Path
+    intros: Path = Path("intros")
 
     @property
     def secret_file(self) -> Path:
@@ -63,10 +64,13 @@ def parse(argv: Optional[Sequence[str]] = None,
                         help="certificate file (default: <data>/cert.pem)")
     parser.add_argument("--key", default=env("KEY", ""),
                         help="certificate key file (default: <data>/key.pem)")
+    parser.add_argument("--intros", default=env("INTROS", "intros"),
+                        help="folder of character intros (default: intros)")
     args = parser.parse_args(argv)
     data = Path(args.data)
     return Settings(host=args.host, port=args.port,
                     bridge_host=args.bridge_host, bridge_port=args.bridge_port,
                     data=data,
                     cert_file=Path(args.cert) if args.cert else data / "cert.pem",
-                    key_file=Path(args.key) if args.key else data / "key.pem")
+                    key_file=Path(args.key) if args.key else data / "key.pem",
+                    intros=Path(args.intros))

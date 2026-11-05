@@ -322,6 +322,121 @@ button:disabled { opacity: 0.6; cursor: wait; }
 .gv-action h3 { margin: 0 0 8px; font-size: 1rem; text-transform: capitalize; }
 .gv-result { margin: 8px 0 0; font-weight: 700; }
 
+/* ── Character intros (intro.js): full screen, before the webapp ── */
+
+body.pending main { visibility: hidden; }      /* until the first hello: intro or not */
+body.intro-running { overflow: hidden; }
+
+.intro {
+  --intro-color: #d4b06a;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: #000;
+  color: #f2ead8;
+}
+
+.intro-clip {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+}
+
+.intro-clip.front { z-index: 2; }
+
+.intro-ui {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: 8vh;
+  transform: translateX(-50%);
+  width: min(420px, calc(100vw - 32px));
+  text-align: center;
+  text-shadow: 0 1px 4px #000;
+  transition: opacity 0.6s;
+}
+
+.intro-ui.gone { opacity: 0; pointer-events: none; }
+.intro-label { margin: 0; font-weight: 700; letter-spacing: 0.06em; }
+.intro-hint { margin: 8px 0 0; font-size: 0.85rem; opacity: 0.8; }
+
+.intro-bar {
+  height: 6px;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.intro-fill {
+  width: 0;
+  height: 100%;
+  background: var(--intro-color);
+  box-shadow: 0 0 10px var(--intro-color);
+}
+
+.intro-bar.waiting .intro-fill { animation: intro-pulse 1.6s ease-in-out infinite; }
+
+@keyframes intro-pulse { 50% { opacity: 0.35; } }
+
+.intro-buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 10px; }
+
+.intro-enter {
+  padding: 10px 28px;
+  font-size: 1.05rem;
+  letter-spacing: 0.05em;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--intro-color);
+  border-radius: 4px;
+  box-shadow: 0 0 18px var(--intro-color);
+}
+
+.intro-skip {
+  padding: 8px 14px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #ddd;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+
+.intro-turn {
+  display: none;
+  position: absolute;
+  z-index: 3;
+  top: 16px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0 16px;
+  text-align: center;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+/* Upright phones: the whole (wide) picture across the middle. */
+@media (orientation: portrait) {
+  .intro-clip { object-fit: contain; }
+  .intro-turn { display: block; }
+}
+
+.intro-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 900ms cubic-bezier(0.3, 0, 0.2, 1);
+}
+
+.intro-flash.on { opacity: 1; transition: none; }
+
 /* ── Narrow phones: a little more room between the columns ── */
 
 @media (max-width: 380px) {

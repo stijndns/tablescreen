@@ -2,8 +2,9 @@
 hub.py — The webapp's live connections: one WebSocket per open page.
 
 Every page gets ``hello`` (who it is, whether the table is connected, the
-tabs and where their views are) and each feature's ``state`` when it
-connects, and again whenever something changes:
+tabs and where their views are, the character's intro if it has one) and
+each feature's ``state`` when it connects, and again whenever something
+changes:
 
   * a new state from the app → every page;
   * the app connecting or dropping, a character linked or unlinked → a new
@@ -30,6 +31,7 @@ from typing import Any, Optional
 from fastapi import WebSocket
 
 from .accounts import Account, AccountStore
+from .intros import Intros
 
 CHECK_EVERY = 30.0          # seconds between checks of the open sessions
 CLOSE_LOGIN = 4401          # the session ended: go to the login page
@@ -77,12 +79,14 @@ class Page:
 
 
 class Hub:
-    def __init__(self, accounts: AccountStore, bridge: Any, overrides: Path):
+    def __init__(self, accounts: AccountStore, bridge: Any, overrides: Path,
+                 intros: Optional[Intros] = None):
         """``bridge`` is the BridgeClient (features, views, states,
         connected); ``overrides`` the folder of the webapp's own views."""
         self.accounts = accounts
         self.bridge = bridge
         self.overrides = overrides
+        self.intros = intros or Intros(Path("/nonexistent"))
         self.pages: set[Page] = set()
         bridge.on_event = self.on_bridge_event
 
@@ -108,6 +112,8 @@ class Hub:
                 "user": account.user if account else None,
                 "role": account.role if account else "guest",
                 "character": account.character if account else None,
+                "intro": intro.public() if (intro := self.intros.for_character(
+                    account.character if account else None)) else None,
                 "app_connected": self.bridge.connected,
                 "tabs": self.tabs()}
 

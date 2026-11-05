@@ -24,6 +24,9 @@ const states = {};          // feature → its latest state message
 const tabs = new Map();     // feature → {key, panel, view, button}
 let selected = remembered();
 let socket = null, retries = 0, retryTimer = null;
+let appConnected = false, intro = null, introPlaying = null;
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+document.body.classList.add("pending");       // until the first hello: intro or not
 
 function remembered() {
   try {
@@ -70,6 +73,7 @@ function connect() {
       return;
     }
     showStatus(false, true);
+    document.body.classList.remove("pending");
     const delay = RETRY_MS[Math.min(retries, RETRY_MS.length - 1)];
     retries += 1;
     retryTimer = setTimeout(connect, delay);
@@ -103,13 +107,57 @@ function onHello(hello) {
   const changedWho = hello.user !== ctx.user || hello.character !== ctx.character
     || hello.role !== ctx.role;
   Object.assign(ctx, {user: hello.user, role: hello.role, character: hello.character});
+  appConnected = hello.app_connected;
+  intro = hello.intro || null;
   showWho();
   syncTabs(hello.tabs || []);
   showStatus(hello.app_connected, false);
   if (changedWho) {
     for (const [name, tab] of tabs) refresh(name, tab);    // e.g. "you" moves
   }
+  if (intro && !seen(intro)) startIntro();
+  document.body.classList.remove("pending");
 }
+
+// ── The character's intro (intro.js): once per browser session ──────────
+
+function seen(which) {
+  try {
+    return sessionStorage.getItem(`intro:${which.name}`) === "seen";
+  } catch (e) {
+    return false;
+  }
+}
+
+function startIntro() {
+  if (introPlaying || reducedMotion || !intro) return;
+  const playing = intro;
+  introPlaying = import("/static/intro.js").then((module) => module.playIntro(playing, {
+    isReady: loaded,
+    onDone: () => {
+      introPlaying = null;
+      try {
+        sessionStorage.setItem(`intro:${playing.name}`, "seen");
+      } catch (e) {
+        // private mode: it plays again next time
+      }
+    },
+  })).catch((e) => {
+    console.error(e);
+    introPlaying = null;
+  });
+}
+
+// Loaded: the table connected, and every tab showing its state.
+function loaded() {
+  if (!appConnected || tabs.size === 0) return false;
+  for (const [name, tab] of tabs) {
+    if (!tab.view || !states[name]) return false;
+  }
+  return true;
+}
+
+document.getElementById("replay").addEventListener("click", startIntro);
 
 function onState(message) {
   states[message.feature] = message;
@@ -129,6 +177,7 @@ function showWho() {
   document.getElementById("login").hidden = Boolean(ctx.user);
   document.getElementById("password").hidden = !ctx.user;
   document.getElementById("logout").hidden = !ctx.user;
+  document.getElementById("replay").hidden = !intro || reducedMotion;
 }
 
 document.getElementById("logout").addEventListener("click", async () => {

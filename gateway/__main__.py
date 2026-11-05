@@ -14,6 +14,7 @@ import uvicorn
 from . import settings as gateway_settings
 from .accounts import AccountStore
 from .bridge_client import BridgeClient
+from .intros import Intros
 from .web import create_app
 
 
@@ -54,7 +55,8 @@ def main() -> None:
 
     bridge = BridgeClient(settings.bridge_host, settings.bridge_port,
                           settings.secret_file, accounts)
-    app = create_app(accounts, bridge, background=(bridge.run,))
+    app = create_app(accounts, bridge, intros=Intros(settings.intros).load(),
+                     background=(bridge.run,))
 
     if os.environ.get("TABLESCREEN_GATEWAY_IN_CONTAINER"):
         # Its own addresses mean nothing outside; the PC's port is compose's.

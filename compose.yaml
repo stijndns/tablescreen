@@ -19,10 +19,17 @@ services:
       - type: bind              # the long form: a Windows path has a colon of its own
         source: "${TABLESCREEN_DATA:-./api}"
         target: /data
+      - type: bind              # character intros (not in version control)
+        source: "${TABLESCREEN_INTROS:-./intros}"
+        target: /intros
+        read_only: true
+        bind:
+          create_host_path: true
     environment:
       TABLESCREEN_GATEWAY_BRIDGE_HOST: "${TABLESCREEN_BRIDGE_HOST:-host.docker.internal}"
       TABLESCREEN_GATEWAY_BRIDGE_PORT: "${TABLESCREEN_BRIDGE_PORT:-8765}"
       TABLESCREEN_GATEWAY_PUBLIC_PORT: "${TABLESCREEN_PORT:-8443}"
+      TABLESCREEN_GATEWAY_INTROS: /intros
     # Locked down: the container is the part that might be compromised.
     read_only: true
     tmpfs:

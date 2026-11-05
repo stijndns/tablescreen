@@ -138,6 +138,39 @@ The gateway may be started before or after Tablescreen: it connects as soon as b
 
 A session lasts until 30 days without use, so phones stay logged in from one game to the next. It also ends at logout, and when the password is changed on another device.
 
+## Character intros
+
+A player whose linked character has an intro sees it while the webapp loads. The character's loop plays, silently, for at least 10 seconds and until the table is connected; while the table is offline it says "Waiting for the table…" and keeps looping. Then a button (for example "Enter the realm") turns the sound on, the loop finishes its current clip, and the finale plays and ends on white, which fades into the webapp.
+
+- It plays once per browser session: the first time the webapp is opened after the browser was closed. "Replay intro" on the main page plays it again.
+- "Skip" (or Esc) goes straight to the webapp, once it has loaded.
+- On a phone held upright, the whole picture is shown across the middle; held sideways, it fills the screen.
+- Players who turned on "reduce motion" on their device don't get it.
+
+Intros live in the `intros/` folder in the repository root, one folder per intro. The folder isn't in version control: it is the players' own art, and large. A new intro is a new folder with a lowercase name, its clips and an `intro.json`:
+
+```json
+{
+  "characters": ["Xyra", "Xyra El Finnis Feror", "Xyra_El_Finnis_Feror"],
+  "loop": ["xyra_left.mp4", "xyra_right.mp4", "xyra_turn.mp4"],
+  "finale": "xyra_finale.mp4",
+  "loading": "Loading your campaign…",
+  "button": "Enter the library",
+  "after_click": "Xyra weaves her circle…",
+  "color": "#5fd6a0"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `characters` | The character names it is for, as linked with `api user link`. Capitals and extra spaces don't matter; list every other spelling. |
+| `loop` | The clips played while loading, in random order. One clip is fine. Each should start and end on the same picture, so they join seamlessly. |
+| `finale` | The clip after the button. It should end on pure white. |
+| `loading`, `button`, `after_click` | Optional texts: while loading, on the button, and after the tap. |
+| `color` | Optional colour of the progress bar and the button's glow. |
+
+Clips are MP4 (H.264 video with AAC sound) or WebM. The loop's sound is never heard; the finale's is. The gateway reads the intros when it starts, so restart it after adding one; its log lists them (`Intros: …`), or says why one was left out.
+
 ## Troubleshooting
 
 **A device can't reach the webapp** ("took too long to respond"), but the PC itself can:

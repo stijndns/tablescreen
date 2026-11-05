@@ -14,6 +14,7 @@ Setting it up and running it is described in [the setup guide](../docs/webapp_se
 | `throttle.py` | `Throttle` for wrong passwords, `RateLimit` for actions |
 | `bridge_client.py` | `BridgeClient`: connects to Tablescreen, keeps the shared features, views and states, sends actions, answers `api user …` |
 | `hub.py` | `Hub`: one entry per open page, pushing `hello` and `state` messages |
+| `intros.py` | `Intros`: the character intros in `intros/`, read from each `intro.json` at start-up |
 | `web.py` | The FastAPI app: pages, the JSON API, the WebSocket, security headers |
 | `webapp/` | The webapp: the pages, `static/` (the shell, styles, the generic view), `static/theme/` (the look's images: parchment, cornice, column pieces) and `views/` (the webapp's own views) |
 | `requirements.txt` | The gateway's packages; the container installs only these |
@@ -34,6 +35,7 @@ When the connection drops, the last features and states stay: the webapp keeps s
 | `GET /static/…` | The shell's scripts and styles, and the generic view |
 | `GET /views/webapp/<feature>.js` | The webapp's own view for a tab, if there is one |
 | `GET /views/feature/<feature>.js` | The feature's view, as Tablescreen sent it |
+| `GET /intros/<intro>/<clip>` | A character intro's clip, for logged-in accounts; only the files its `intro.json` names, with range requests for video players |
 | `GET /api/me` | Who this browser is; a guest without a session |
 | `POST /api/login` | `{user, password}` → a session cookie |
 | `POST /api/logout` | Ends this session |
@@ -44,6 +46,10 @@ When the connection drops, the last features and states stay: the webapp keeps s
 The WebSocket sends a `hello` (user, role, character, whether the table is connected, and the tabs with their actions and the views a page may load) and a `state` per feature: at connect, and again whenever something changes. Each page keeps only the latest unsent message of each kind, so a slow phone skips old states instead of falling behind. When its session ends, a page's socket closes with code 4401 and the page goes to the login page; an account still on its initial password gets 4403 and goes to the change-password page. Open sessions are checked every 30 seconds for changes made outside the gateway, such as `prepare_accounts.py --reset`.
 
 An action is checked as far as the gateway knows: logged in past the initial password, at most 10 actions in 10 seconds per account, the table connected, an action Tablescreen offers, and a dm-only action only for the dm. The caller's character comes from the database, never from the browser. Tablescreen then checks the game's rules itself, and its answer is the reply, without the console's `[+]`/`[!]` markers.
+
+## Character intros
+
+When the account's linked character has an intro (matched ignoring case and extra spaces), `hello` carries it: its clips' URLs, texts and colour. The page then plays it with `static/intro.js` before showing the webapp, once per browser session: the loop until the webapp is loaded (at least 10 seconds, the table connected, every tab showing its state), then the finale after the player's tap. How to add one is described in [the setup guide](../docs/webapp_setup.md#character-intros). The container gets the `intros/` folder read-only, as `/intros`.
 
 ## Views
 

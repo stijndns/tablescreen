@@ -4,6 +4,7 @@ web.py — The gateway's web side: the webapp's pages and its JSON API.
     GET  /, /login, /password       the webapp's pages (static files)
     GET  /views/webapp/<name>.js    the webapp's own view for a tab (if any)
     GET  /views/feature/<name>.js   the feature's view, as the app sent it
+    GET  /intros/<intro>/<clip>     a character intro's clip (logged in only)
     WS   /ws                        live: hello and states (see hub.py)
     POST /api/actions/<f>/<action>  a player's action: {field: value, …}
     GET  /api/me                    who this browser is (a guest without login)
@@ -42,6 +43,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .accounts import SESSION_IDLE, Account, AccountStore, password_problem
 from .hub import CLOSE_PASSWORD, Hub
+from .intros import Intros
 from .throttle import RateLimit, Throttle
 
 # Windows can map .js to text/plain in its registry; browsers refuse to
@@ -71,12 +73,13 @@ log = logging.getLogger("gateway")
 
 def create_app(accounts: AccountStore, bridge: Any, *, throttle: Optional[Throttle] = None,
                rate_limit: Optional[RateLimit] = None, fail_delay: float = FAIL_DELAY,
+               intros: Optional[Intros] = None,
                background: tuple[Callable[[], Awaitable[None]], ...] = ()) -> FastAPI:
     """``bridge`` is the BridgeClient (or a stand-in with its attributes);
     ``background`` coroutines (the bridge client) run while the server does."""
     throttle = throttle or Throttle()
     rate_limit = rate_limit or RateLimit()
-    hub = Hub(accounts, bridge, WEBAPP / "views")
+    hub = Hub(accounts, bridge, WEBAPP / "views", intros)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -120,6 +123,15 @@ def create_app(accounts: AccountStore, bridge: Any, *, throttle: Optional[Thrott
         if source is None:
             return Response("// no such view", status_code=404, media_type="text/javascript")
         return Response(source, media_type="text/javascript")
+
+    @app.get("/intros/{name}/{file}", include_in_schema=False)
+    def intro_file(name: str, file: str, request: Request) -> Response:
+        # Only for accounts (the clips are large), and only what an intro names.
+        account, _ = current(request)
+        path = hub.intros.file(name, file) if account else None
+        if path is None:
+            return Response(status_code=404)
+        return FileResponse(path)       # answers range requests, as video players need
 
     # ── Live ──────────────────────────────────────────────────────────────
 
