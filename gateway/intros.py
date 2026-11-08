@@ -9,7 +9,9 @@ out of version control: it's the players' own art), with its clips and an
     {
       "characters": ["Xyra", "Xyra El Finnis Feror"],   // matched ignoring case
       "loop": ["xyra_left.mp4", "xyra_right.mp4"],      // while loading, random order
-      "finale": "xyra_finale.mp4",                      // after the button; ends on white
+      "closing": ["fight.mp4"],                         // optional: once, in order, after the button
+      "finale": "xyra_finale.mp4",                      // last; ends on white or black
+      "ends_on": "white",                               // optional: "white" (default) or "black"
       "loading": "Loading your campaign…",              // optional texts and colour
       "button": "Enter the library",
       "after_click": "Xyra raises her hands…",
@@ -51,16 +53,19 @@ class Intro:
     finale: str
     texts: dict
     color: Optional[str]
+    closing: tuple[str, ...] = ()
+    ends_on: str = "white"
 
     @property
     def files(self) -> set[str]:
-        return {*self.loop, self.finale}
+        return {*self.loop, *self.closing, self.finale}
 
     def public(self) -> dict:
         """What a page needs to play it."""
         base = f"/intros/{self.name}/"
         return {"name": self.name, "loop": [base + f for f in self.loop],
-                "finale": base + self.finale, "color": self.color, **self.texts}
+                "closing": [base + f for f in self.closing], "finale": base + self.finale,
+                "ends_on": self.ends_on, "color": self.color, **self.texts}
 
 
 class Intros:
@@ -137,6 +142,11 @@ class Intros:
         color = data.get("color")
         if color is not None and (not isinstance(color, str) or not COLOR_RE.fullmatch(color)):
             raise ValueError("'color' must look like #5fd6a0")
+        ends_on = data.get("ends_on", "white")
+        if ends_on not in ("white", "black"):
+            raise ValueError("'ends_on' must be white or black")
+        closing = tuple(clip(c) for c in text_list("closing")) if "closing" in data else ()
         return Intro(name=folder.name, folder=folder, characters=text_list("characters"),
                      loop=tuple(clip(c) for c in text_list("loop")),
-                     finale=clip(data.get("finale")), texts=texts, color=color)
+                     finale=clip(data.get("finale")), texts=texts, color=color,
+                     closing=closing, ends_on=ends_on)

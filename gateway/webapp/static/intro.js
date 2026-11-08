@@ -3,8 +3,9 @@
 // The loop clips play, silently and in random order, until the webapp is
 // loaded: at least `minimumMs`, the table connected and every tab showing its
 // state (`isReady()`). Then the button: its tap turns the sound on, the loop
-// clip that is playing finishes, and the finale plays. It ends on white,
-// which fades into the webapp. "Skip" (or Esc) goes straight there.
+// clip that is playing finishes, any closing scenes play once, and the finale
+// plays. It ends on white or black, which fades into the webapp. "Skip" (or
+// Esc) goes straight there.
 //
 // Two video elements take turns: the next clip waits underneath on its first
 // frame and comes to the front once it shows a frame, so the clips join
@@ -44,21 +45,27 @@ export function playIntro(intro, {isReady, onDone, minimumMs = MINIMUM_MS}) {
   enter.type = "button";
   const skip = el("button", "intro-skip", "Skip ›");
   skip.type = "button";
-  buttons.append(enter, skip);
+  skip.hidden = true;
+  buttons.append(enter);
   const hint = el("p", "intro-hint", "Sound on, so mind your volume.");
   hint.hidden = true;
   ui.append(label, bar, buttons, hint);
   const turn = el("p", "intro-turn", "Turn your phone sideways for the full view.");
-  root.append(...vids, ui, turn);
-  const flash = el("div", "intro-flash");
+  root.append(...vids, ui, skip, turn);
+  const flash = el("div", intro.ends_on === "black" ? "intro-flash black" : "intro-flash");
   document.body.append(root, flash);
   document.body.classList.add("intro-running");
 
   const started = performance.now();
   let state = "loading";      // → ready → finishing → finale → done
   let cur = vids[0], nxt = vids[1], finish = false, frame = 0;
+  let queued = null;          // the clip after this one
+  let swapping = false;       // between a join and the new clip's first frame
+  const closing = [...(intro.closing || [])];
 
   const pick = () => intro.loop[Math.floor(Math.random() * intro.loop.length)];
+  // What plays at the next join: loop clips, then the closing scenes, then the finale.
+  const following = () => (finish ? closing.shift() || intro.finale : pick());
 
   function prepare(video, url) {        // park on the clip's first frame
     if (video.getAttribute("src") !== url) {
@@ -92,18 +99,22 @@ export function playIntro(intro, {isReady, onDone, minimumMs = MINIMUM_MS}) {
     const old = cur;
     cur = nxt;
     play(cur);
-    if (cur.getAttribute("src") === intro.finale) {
+    const url = cur.getAttribute("src");
+    if (finish && !intro.loop.includes(url)) ui.classList.add("gone");
+    if (url === intro.finale) {
       state = "finale";
-      ui.classList.add("gone");
       nxt = null;
       toFront(cur, () => old.pause());
       cur.addEventListener("ended", reveal, {once: true});
       return;
     }
     nxt = old;
+    queued = following();
+    swapping = true;
     toFront(cur, () => {
+      swapping = false;
       old.pause();
-      prepare(old, finish ? intro.finale : pick());
+      prepare(old, queued);
     });
   }
 
@@ -124,7 +135,10 @@ export function playIntro(intro, {isReady, onDone, minimumMs = MINIMUM_MS}) {
     // under the tap so phones let it play with sound later.
     for (const v of vids) v.muted = false;
     const left = (cur.duration || 0) - (cur.currentTime || 0);
-    if (left > SWAP_MARGIN) prepare(nxt, intro.finale);   // else it follows one clip later
+    if (left > SWAP_MARGIN) {                 // else it follows one clip later
+      queued = following();
+      if (!swapping) prepare(nxt, queued);
+    }
     const waiting = nxt;
     const primed = waiting.play();
     if (primed && primed.then) {
@@ -173,6 +187,7 @@ export function playIntro(intro, {isReady, onDone, minimumMs = MINIMUM_MS}) {
           label.textContent = "Ready";
           bar.hidden = true;
           buttons.hidden = false;
+          skip.hidden = false;
           hint.hidden = false;
           enter.focus();
         } else {
@@ -184,8 +199,9 @@ export function playIntro(intro, {isReady, onDone, minimumMs = MINIMUM_MS}) {
     if (state !== "done") frame = requestAnimationFrame(tick);
   }
 
+  queued = pick();
   prepare(vids[0], pick());
-  prepare(vids[1], pick());
+  prepare(vids[1], queued);
   vids[0].classList.add("front");
   play(vids[0]);
   frame = requestAnimationFrame(tick);

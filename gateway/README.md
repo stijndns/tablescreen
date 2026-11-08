@@ -49,7 +49,7 @@ An action is checked as far as the gateway knows: logged in past the initial pas
 
 ## Character intros
 
-When the account's linked character has an intro (matched ignoring case and extra spaces), `hello` carries it: its clips' URLs, texts and colour. The page then plays it with `static/intro.js` before showing the webapp, once per browser session: the loop until the webapp is loaded (at least 10 seconds, the table connected, every tab showing its state), then the finale after the player's tap. How to add one is described in [the setup guide](../docs/webapp_setup.md#character-intros). The container gets the `intros/` folder read-only, as `/intros`.
+When the account's linked character has an intro (matched ignoring case and extra spaces), `hello` carries it: its clips' URLs, texts and colour. The page then plays it with `static/intro.js` before showing the webapp, once per browser session: the loop until the webapp is loaded (at least 10 seconds, the table connected, every tab showing its state), then any closing scenes and the finale after the player's tap. How to add one is described in [the setup guide](../docs/webapp_setup.md#character-intros). The container gets the `intros/` folder read-only, as `/intros`.
 
 ## Views
 
