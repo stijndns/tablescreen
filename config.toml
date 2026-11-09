@@ -30,7 +30,7 @@ aoe_hatching = true         # hatch lines inside areas of effect (false: outline
 
 [api]
 # The player webapp. Off unless enabled; the gateway (a separate program)
-# connects to the app over the bridge below.
+# connects to the app over the bridge below, once 'api open' opens the table.
 enabled = false
 share = ["combat"]          # one webapp tab per feature listed here
 bridge_host = "127.0.0.1"

@@ -15,6 +15,8 @@ app and what comes in:
   * ``api user …`` lists the gateway's accounts and links characters to
     them. Creating accounts and passwords is the gateway's business only:
     no password ever reaches the app.
+  * Nothing listens at boot: ``api open`` opens the bridge when the game
+    master has finished preparing, ``api close`` closes it again.
 """
 
 from __future__ import annotations
@@ -45,6 +47,8 @@ ACCOUNTS_TIMEOUT = 5.0         # seconds to wait for the gateway's answer
 API_HELP = """\
 API commands (the player webapp's link to the app):
   api                                       — status: bridge, gateway, shared tabs
+  api open                                  — open the table: let the gateway connect
+  api close                                 — close it: players see the table as offline
   api user list                             — the gateway's accounts
   api user link <name> <character>          — the character a player acts as
   api user unlink <name>                    — no character
@@ -136,7 +140,8 @@ class ApiService:
         self._executor = executor
         self._published: dict[str, _Published] = {}
         self._actions: dict[tuple[str, str], Action] = {}
-        self._bridge: Optional[Bridge] = None
+        self._bridge: Optional[Bridge] = None       # only while the table is open
+        self._secret = ""
         self._pending: dict[str, Future] = {}       # account requests by id
         self._pending_lock = threading.Lock()
 
@@ -168,14 +173,25 @@ class ApiService:
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def start(self) -> None:
+        """At boot: everything but the bridge, which waits for ``api open``."""
         if not self.config.enabled:
             return
         for name in self.config.share:
             if name not in self._published:
                 print(f"[!] api: '{name}' is in [api] share but publishes nothing "
                       f"(not enabled, or no API support).")
-        secret = read_or_create_secret(self.config.secret_file)
-        self._bridge = Bridge(self.config.bridge_host, self.config.bridge_port, secret,
+        self._secret = read_or_create_secret(self.config.secret_file)
+        self._executor.after_each(self._publish_changes)
+        print("[i] api: the table is closed; type 'api open' when the players may come in.")
+
+    def open_table(self) -> None:
+        if not self.config.enabled:
+            print("[!] The API is off (enable it in config.toml [api]).")
+            return
+        if self._bridge:
+            print("[i] The table is already open.")
+            return
+        self._bridge = Bridge(self.config.bridge_host, self.config.bridge_port, self._secret,
                               on_ready=self._on_ready, on_message=self._on_message,
                               on_lost=self._on_lost)
         try:
@@ -184,13 +200,20 @@ class ApiService:
             print(f"[!] api: can't listen on {self._bridge.address}: {exc}")
             self._bridge = None
             return
-        self._executor.after_each(self._publish_changes)
-        print(f"[+] api: waiting for the gateway on {self._bridge.address}; "
+        print(f"[+] api: the table is open; waiting for the gateway on {self._bridge.address}; "
               f"sharing {', '.join(self.shared()) or 'nothing'}.")
 
+    def close_table(self) -> None:
+        if self._bridge is None:
+            print("[i] The table isn't open.")
+            return
+        self.stop()
+        print("[+] api: the table is closed; the players see it as offline.")
+
     def stop(self) -> None:
-        if self._bridge:
-            self._bridge.stop()
+        bridge, self._bridge = self._bridge, None
+        if bridge:
+            bridge.stop()
 
     @property
     def bridge(self) -> Optional[Bridge]:
@@ -341,8 +364,12 @@ class ApiService:
         """Ask the gateway and wait for its answer; None (and a message)
         when it can't be asked."""
         if not (self._bridge and self._bridge.connected):
-            print("[!] The gateway isn't connected." if self._bridge
-                  else "[!] The API is off (enable it in config.toml [api]).")
+            if not self.config.enabled:
+                print("[!] The API is off (enable it in config.toml [api]).")
+            elif self._bridge is None:
+                print("[!] The table is closed: type 'api open' first.")
+            else:
+                print("[!] The gateway isn't connected.")
             return None
         request_id = secrets.token_hex(8)
         future: Future = Future()
@@ -368,6 +395,10 @@ class ApiService:
             return
         if not parts or parts == ["status"]:
             self._print_status()
+        elif parts == ["open"]:
+            self.open_table()
+        elif parts == ["close"]:
+            self.close_table()
         elif parts[0] == "help":
             print(API_HELP)
         elif parts[0] == "user" and len(parts) >= 2:
@@ -380,10 +411,10 @@ class ApiService:
             print("[i] The API is off (enable it in config.toml [api]).")
             return
         if self._bridge is None:
-            print("[!] The API is on but the bridge isn't listening (see the start-up message).")
+            print("[i] The table is closed: type 'api open' when the players may come in.")
             return
         gateway = self._bridge.gateway_address
-        print(f"[i] Bridge on {self._bridge.address}; gateway "
+        print(f"[i] The table is open. Bridge on {self._bridge.address}; gateway "
               f"{'connected (' + gateway + ')' if gateway else 'not connected'}.")
         for name in self.shared():
             published = self._published[name]
@@ -432,7 +463,7 @@ class ApiService:
     def complete_api(self, text, line, begidx, endidx) -> list[str]:
         parts = get_arg_parts(line[:begidx])
         if len(parts) == 1:
-            options = ["status", "user", "help"]
+            options = ["status", "open", "close", "user", "help"]
         elif len(parts) == 2 and parts[1] == "user":
             options = ["list", "link", "unlink"]
         else:

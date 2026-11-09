@@ -46,7 +46,7 @@ secret_file = "api/bridge.secret"
 combat = "auto"
 ```
 
-Start Tablescreen once. It creates the bridge secret in `api/bridge.secret` and prints `[+] api: waiting for the gateway on 127.0.0.1:8765; sharing combat.`
+Start Tablescreen once. It creates the bridge secret in `api/bridge.secret` and says that the table is closed.
 
 The `api/` folder holds everything private: the secret, the certificate's key and the accounts. It is excluded from version control and never goes into the container image.
 
@@ -98,15 +98,22 @@ It builds the gateway's image and starts it with a throwaway certificate, accoun
 
 ## Every session
 
-1. Start Tablescreen: `python -m tablescreen`.
+1. Start Tablescreen: `python -m tablescreen`. The table is closed, so you can prepare in peace.
 2. Start the gateway, from the repository folder:
 
    ```
    docker compose up -d --build
    ```
 
-   `--build` picks up an update of the gateway; when nothing changed it takes a second. The console shows `[+] api: gateway connected`.
-3. Link each player's account to their character, in Tablescreen's console:
+   `--build` picks up an update of the gateway; when nothing changed it takes a second.
+3. When you are ready for the players, open the table in Tablescreen's console:
+
+   ```
+   api open
+   ```
+
+   Within two seconds the console shows `[+] api: gateway connected`. Until then the webapp says "Table offline", and character intros keep waiting.
+4. Link each player's account to their character, in Tablescreen's console. This needs an open table:
 
    ```
    api user list
@@ -114,8 +121,8 @@ It builds the gateway's image and starts it with a throwaway certificate, accoun
    ```
 
    Links are kept in the accounts database, so this is only needed when a character changes. `api user unlink alice` removes one.
-4. The players open `https://<the PC's address>:8443`.
-5. After the session:
+5. The players open `https://<the PC's address>:8443`.
+6. After the session, `api close` in the console closes the table (or just exit Tablescreen), and then:
 
    ```
    docker compose down
@@ -123,7 +130,7 @@ It builds the gateway's image and starts it with a throwaway certificate, accoun
 
 `api` in Tablescreen's console shows the bridge and the gateway's connection. `docker compose logs -f gateway` shows the gateway's log: logins, failed logins and every action with its result.
 
-The gateway may be started before or after Tablescreen: it connects as soon as both run, and again whenever Tablescreen restarts. Meanwhile the webapp shows "Table offline" and keeps the last state on screen, greyed.
+The gateway may be started before or after Tablescreen: it connects as soon as the table is open, and again after `api close` and `api open`, or a restart of Tablescreen. Meanwhile the webapp shows "Table offline" and keeps the last state on screen, greyed.
 
 ## On a device, the first time
 
@@ -182,7 +189,7 @@ Clips are MP4 (H.264 video with AAC sound) or WebM. The loop's sound starts at t
 - The address was typed without `https://` or without `:8443`.
 - `netstat -ano | findstr 8443` on the PC should show `0.0.0.0:8443 … LISTENING`.
 
-**"Table offline"** while Tablescreen runs: check `enabled = true` under `[api]`, and the gateway's log. "The app isn't reachable" means Tablescreen's bridge isn't listening (see its start-up message); "the bridge secret doesn't match" means the two read different secret files.
+**"Table offline"** while Tablescreen runs: has the table been opened with `api open`? Check also `enabled = true` under `[api]`, and the gateway's log. "The app isn't reachable" means Tablescreen's bridge isn't listening (see its start-up message); "the bridge secret doesn't match" means the two read different secret files.
 
 **The certificate warning comes back:** the certificate was replaced, or the device uses an address the certificate doesn't list.
 

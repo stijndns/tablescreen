@@ -160,6 +160,9 @@ class Bridge:
             print(f"[!] api: refused a bridge connection from {connection.address}: {exc}")
             connection.close()
             return
+        if self._server is None:        # closed during the handshake
+            connection.close()
+            return
 
         self._on_ready(connection)
         with self._lock:

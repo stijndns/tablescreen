@@ -76,7 +76,8 @@ class BridgeClient:
                 try:
                     reader, writer = await asyncio.open_connection(self.host, self.port)
                 except OSError as exc:
-                    new_problem = f"The app isn't reachable at {self.address} ({exc.strerror or exc})."
+                    new_problem = (f"The app isn't reachable at {self.address}"
+                                   f" ({exc.strerror or exc}): is the table open ('api open')?")
                 else:
                     problem = None
                     await self._session(reader, writer, secret)

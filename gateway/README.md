@@ -21,7 +21,7 @@ Setting it up and running it is described in [the setup guide](../docs/webapp_se
 
 ## The bridge, from this side
 
-Tablescreen listens; the gateway connects (127.0.0.1:8765 by default, `host.docker.internal` from the container) and proves it knows the shared secret by answering a challenge with an HMAC. The secret itself never crosses the wire. It retries every 2 seconds while Tablescreen isn't running, and reconnects after it restarts.
+Tablescreen listens; the gateway connects (127.0.0.1:8765 by default, `host.docker.internal` from the container) and proves it knows the shared secret by answering a challenge with an HMAC. The secret itself never crosses the wire. It retries every 2 seconds while Tablescreen isn't running or hasn't opened the table (`api open`), and reconnects after a restart or `api close`.
 
 After the handshake, Tablescreen sends `ready` (the shared features, their actions and their views' source) and then every feature's `state`, and a new `state` after every command that changed it. The gateway sends `action` messages and waits up to 5 seconds for each `result`. Tablescreen's `api user list|link|unlink` arrive as `accounts` requests, answered from the database.
 

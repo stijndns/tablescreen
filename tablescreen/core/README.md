@@ -191,7 +191,7 @@ def _heal_line(self, args, caller):
 
 ### The bridge
 
-The application listens on `[api] bridge_host:bridge_port` (127.0.0.1:8765 by default); the gateway connects. Each message is one JSON object per line, at most 1 MiB. The gateway proves it knows the shared secret (`api/bridge.secret`, created on the first start) by answering a challenge with an HMAC within 5 seconds; the secret itself never crosses the wire. The wire format is `bridge_protocol.py` at the repository root, used by both sides.
+Nothing listens at start-up, so the game master can prepare first. `api open` starts listening on `[api] bridge_host:bridge_port` (127.0.0.1:8765 by default) and the gateway, which keeps trying, connects; `api close` closes the bridge again. Each message is one JSON object per line, at most 1 MiB. The gateway proves it knows the shared secret (`api/bridge.secret`, created on the first start) by answering a challenge with an HMAC within 5 seconds; the secret itself never crosses the wire. The wire format is `bridge_protocol.py` at the repository root, used by both sides.
 
 | From | Message | Meaning |
 |---|---|---|
@@ -210,18 +210,20 @@ Accounts live in the gateway. The application never sees a password; it only lis
 
 ```
 api                         status: the bridge, the gateway, the shared features
+api open                    open the table: let the gateway connect
+api close                   close it: the players see the table as offline
 api user list               the gateway's accounts and their characters
 api user link alice Aria    the character an account plays
 api user unlink alice
 ```
 
-`tools/bridge_test_client.py` stands in for the gateway, to try the application's side by hand.
+The `api user` commands need an open table, since the gateway answers them. `tools/bridge_test_client.py` stands in for the gateway, to try the application's side by hand; it needs an open table too.
 
 ### Configuration
 
 ```toml
 [api]
-enabled = false             # true to run the bridge
+enabled = false             # true to have the API (`api open` then opens the table)
 share = ["combat"]          # one webapp tab per feature listed here
 bridge_host = "127.0.0.1"
 bridge_port = 8765
