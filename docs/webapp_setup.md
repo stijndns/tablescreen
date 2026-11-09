@@ -145,6 +145,21 @@ The gateway may be started before or after Tablescreen: it connects as soon as t
 
 A session lasts until 30 days without use, so phones stay logged in from one game to the next. It also ends at logout, and when the password is changed on another device.
 
+## Notes to a player
+
+Every logged-in player has a "DM notes" tab next to the feature tabs, for what you want to tell only them. New notes appear at once, and the tab gets a dot until the player has opened it. Guests have no such tab.
+
+```
+api user notes show alice                   what alice currently sees
+api user notes add alice Don't open the door   adds a line; no quotes needed
+api user notes add alice handout.txt        adds every line of notes/handout.txt
+api user notes clear alice                  deletes all of alice's notes
+```
+
+`alice` is the account name, as with `api user link`. These commands need an open table. Notes are kept in the accounts database until you clear them, also between sessions.
+
+Files go in a `notes/` folder in the repository root, which you create yourself; it isn't in version control, since handouts can hold spoilers. The text after the name counts as a file if it is a single word ending in `.txt`, or a quoted name for a file with spaces in it (`"my handout.txt"`). A line can have 1000 characters and a player's notes 20,000 in total. If something doesn't fit, or the file doesn't exist, nothing is added.
+
 ## Character intros
 
 A player whose linked character has an intro sees it while the webapp loads. The character's loop plays, silently, for at least 10 seconds and until the table is connected; while the table is offline it says "Waiting for the table…" and keeps looping. Then a button (for example "Enter the realm") turns the sound on, the loop finishes its current clip, any closing scenes play, and the finale ends on white or black, which fades into the webapp.

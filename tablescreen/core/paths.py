@@ -16,6 +16,7 @@ AUDIO_DIR = ASSETS_DIR / "audio"
 COMBATANT_IMAGES_DIR = IMAGES_DIR / "combatants"
 COMBATANTS_DIR = PROJECT_ROOT / "combatants"
 LOGS_DIR = PROJECT_ROOT / "logs"
+NOTES_DIR = PROJECT_ROOT / "notes"
 
 def ensure_dir(path: Path) -> Path:
     """Create a directory if it does not exist, then return it."""

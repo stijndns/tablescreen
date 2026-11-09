@@ -23,6 +23,7 @@ const ctx = {user: null, role: "guest", character: null};
 const states = {};          // feature → its latest state message
 const tabs = new Map();     // feature → {key, panel, view, button}
 let selected = remembered();
+let chosen = selected;      // the tab the player picked; else the first one
 let socket = null, retries = 0, retryTimer = null;
 let appConnected = false, intro = null, introPlaying = null;
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -152,7 +153,7 @@ function startIntro() {
 function loaded() {
   if (!appConnected || tabs.size === 0) return false;
   for (const [name, tab] of tabs) {
-    if (!tab.view || !states[name]) return false;
+    if (!tab.builtin && (!tab.view || !states[name])) return false;
   }
   return true;
 }
@@ -163,6 +164,27 @@ function onState(message) {
   states[message.feature] = message;
   const tab = tabs.get(message.feature);
   if (tab) refresh(message.feature, tab);
+  markNotes();
+}
+
+// A dot on the DM notes tab, until the player has seen the latest notes.
+const NOTES = "dm-notes";
+
+function notesSeen(text) {
+  try {
+    if (text !== undefined) localStorage.setItem(`notes-seen:${ctx.user}`, text);
+    return localStorage.getItem(`notes-seen:${ctx.user}`) || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function markNotes() {
+  const tab = tabs.get(NOTES), message = states[NOTES];
+  if (!tab || !message) return;
+  const text = message.data.text;
+  const seen = notesSeen(selected === NOTES ? text : undefined);
+  tab.button.classList.toggle("unread", Boolean(text) && text !== seen && selected !== NOTES);
 }
 
 function showWho() {
@@ -206,7 +228,7 @@ function syncTabs(descriptors) {
   bar.replaceChildren(...names.map((name) => tabs.get(name).button));
   bar.hidden = names.length === 0;
   document.getElementById("empty").hidden = names.length > 0;
-  select(names.includes(selected) ? selected : names[0]);
+  select(names.includes(chosen) ? chosen : names[0]);
 }
 
 function addTab(descriptor, key) {
@@ -214,8 +236,9 @@ function addTab(descriptor, key) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "tab";
-  button.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+  button.textContent = descriptor.label || name.charAt(0).toUpperCase() + name.slice(1);
   button.addEventListener("click", () => {
+    chosen = name;
     select(name);
     remember(name);
   });
@@ -235,7 +258,7 @@ function addTab(descriptor, key) {
   tabCtx.actions = descriptor.actions || [];
   tabCtx.send = (action, args) => sendAction(name, action, args);
   const tab = {key, panel, button, notice, body, caption, view: null, schema: descriptor.schema,
-               ctx: tabCtx};
+               ctx: tabCtx, builtin: Boolean(descriptor.builtin)};
   tabs.set(name, tab);
   loadView(descriptor, tab);
 }
@@ -260,6 +283,7 @@ function select(name) {
     tab.panel.hidden = tabName !== name;
     tab.button.classList.toggle("selected", tabName === name);
   }
+  markNotes();
 }
 
 // The first view that loads, from the level [api.views] asks for.
@@ -283,7 +307,7 @@ async function loadView(descriptor, tab) {
       if (tab.removed) return;
       tab.body.replaceChildren();
       tab.view = module.mount(tab.body, tab.ctx);
-      tab.caption.textContent = `${descriptor.name} · ${NAMES[level]}`;
+      tab.caption.textContent = descriptor.builtin ? "" : `${descriptor.name} · ${NAMES[level]}`;
       if (notes.length) {
         tab.notice.textContent = `${notes.join(" ")} Showing ${LABELS[level]}.`;
         tab.notice.hidden = false;

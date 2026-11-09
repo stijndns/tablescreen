@@ -47,6 +47,10 @@ The WebSocket sends a `hello` (user, role, character, whether the table is conne
 
 An action is checked as far as the gateway knows: logged in past the initial password, at most 10 actions in 10 seconds per account, the table connected, an action Tablescreen offers, and a dm-only action only for the dm. The caller's character comes from the database, never from the browser. Tablescreen then checks the game's rules itself, and its answer is the reply, without the console's `[+]`/`[!]` markers.
 
+## DM notes
+
+The game master's notes to a player (`api user notes` in Tablescreen's console) are stored in the `notes` table and arrive as `notes_show`, `notes_add` and `notes_clear` requests over the bridge. Unlike the features' states, which go to every page, they are private: the hub adds a built-in "DM notes" tab to logged-in pages only, and sends a change only to the pages of that account. The view is `webapp/views/dm-notes.js`.
+
 ## Character intros
 
 When the account's linked character has an intro (matched ignoring case and extra spaces), `hello` carries it: its clips' URLs, texts and colour. The page then plays it with `static/intro.js` before showing the webapp, once per browser session: the loop until the webapp is loaded (at least 10 seconds, the table connected, every tab showing its state), then any closing scenes and the finale after the player's tap. How to add one is described in [the setup guide](../docs/webapp_setup.md#character-intros). The container gets the `intros/` folder read-only, as `/intros`.

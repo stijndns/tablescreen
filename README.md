@@ -137,6 +137,7 @@ On Windows, the application runs in per-monitor DPI-aware mode. Window sizes in 
 | `config.toml`               | Configuration                                                                                     |
 | `tablescreen/core/`         | The application framework: shell, windows, message bus                                            |
 | `tablescreen/features/`     | One package per feature                                                                           |
+| `notes/`                    | Text files to add to a player's notes (`api user notes add`). Never committed. |
 | `intros/`                   | Character intros for the webapp: the players' own animations. Never committed. |
 | `api/`                      | The player webapp's private files: the bridge secret, the certificate and the accounts. Never committed. |
 | `gateway/`                  | The player webapp's server ([documentation](gateway/README.md))                                   |

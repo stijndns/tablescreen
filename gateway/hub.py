@@ -9,6 +9,8 @@ changes:
   * a new state from the app → every page;
   * the app connecting or dropping, a character linked or unlinked → a new
     ``hello``;
+  * the game master's notes to a player → that player's pages only: unlike
+    the features' states, they are private;
   * a session ending (logout, the password changed on another device) →
     that page's socket closes with CLOSE_LOGIN and the page goes to login.
 
@@ -37,6 +39,10 @@ CHECK_EVERY = 30.0          # seconds between checks of the open sessions
 CLOSE_LOGIN = 4401          # the session ended: go to the login page
 CLOSE_PASSWORD = 4403       # still the initial password: go and change it
 VIEW_MODES = ("auto", "webapp", "feature", "generic")
+NOTES = "dm-notes"          # a hyphen: no feature can have this name
+NOTES_TAB = {"name": NOTES, "label": "DM notes", "builtin": True, "schema": "notes/1",
+             "view": "auto", "actions": [],
+             "views": {"webapp": f"/views/webapp/{NOTES}.js", "feature": None}}
 
 log = logging.getLogger("gateway")
 
@@ -98,6 +104,7 @@ class Hub:
         page.push("hello", self.hello(page))
         for feature in list(self.bridge.states):
             page.push(f"state:{feature}", self.state(feature))
+        self._push_notes(page)
         page.task = asyncio.create_task(page.send_loop())
         return page
 
@@ -115,7 +122,7 @@ class Hub:
                 "intro": intro.public() if (intro := self.intros.for_character(
                     account.character if account else None)) else None,
                 "app_connected": self.bridge.connected,
-                "tabs": self.tabs()}
+                "tabs": self.tabs() + ([NOTES_TAB] if account else [])}
 
     def tabs(self) -> list[dict]:
         """One per shared feature, with the views a page may load."""
@@ -141,6 +148,12 @@ class Hub:
     def state(self, feature: str) -> dict:
         return {"type": "state", "feature": feature, **self.bridge.states[feature]}
 
+    def _push_notes(self, page: Page) -> None:
+        if page.account:
+            page.push(f"state:{NOTES}", {
+                "type": "state", "feature": NOTES, "schema": "notes/1", "version": 1,
+                "data": {"text": self.accounts.notes(page.account.user)}})
+
     def _hello_all(self, pages=None) -> None:
         for page in list(pages if pages is not None else self.pages):
             page.push("hello", self.hello(page))
@@ -156,6 +169,10 @@ class Hub:
                 page.push(f"state:{detail}", message)
         elif kind == "account" and detail:
             self.account_changed(detail)
+        elif kind == "notes" and detail:
+            for page in list(self.pages):
+                if page.account and page.account.user == detail:
+                    self._push_notes(page)
 
     def account_changed(self, user: str) -> None:
         """The account's pages hear its new details (a linked character)."""

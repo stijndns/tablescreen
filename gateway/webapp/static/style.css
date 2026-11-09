@@ -295,7 +295,21 @@ button:disabled { opacity: 0.6; cursor: wait; }
   background: linear-gradient(90deg, #5e0f0f 0 3px, #8a1c1c 3px calc(100% - 3px), #4e0b0b 0);
 }
 
+.tab.unread::after {          /* a new note from the game master */
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: #ffd76a;
+  box-shadow: 0 0 6px #ffd76a;
+}
+
 .panel { padding-top: 56px; }
+
+.notes { white-space: pre-wrap; overflow-wrap: anywhere; font-weight: 600; }
+.notes.empty { color: var(--muted); }
 
 .stale { opacity: 0.6; filter: grayscale(0.6); }
 

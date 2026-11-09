@@ -10,7 +10,8 @@ listens; the gateway connects and proves it knows the shared secret:
     app:     {"type": "ready", "features": [...]}   then every state
 
 The secret itself never crosses the wire. After that the app sends
-``state``, ``result`` and ``accounts`` (list them, link a character); the
+``state``, ``result`` and ``accounts`` (list them, link a character, a
+player's notes); the
 gateway sends ``action`` and ``accounts_result``. No password ever crosses
 the bridge: accounts are managed on the gateway's side only. Everything
 the gateway sends is untrusted: ``check()`` validates each message's shape
@@ -38,6 +39,8 @@ USER_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,31}")       # feature, action, field names
 ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 MAX_TEXT = 100                  # characters in a string field
+MAX_NOTE_LINE = 1000            # characters in one line of a player's notes
+MAX_NOTES = 20000               # characters in all of a player's notes
 
 
 class ProtocolError(ValueError):
@@ -128,6 +131,18 @@ def clean_text(value: Any, what: str, max_length: int = MAX_TEXT) -> str:
     return value
 
 
+def clean_lines(value: Any) -> list[str]:
+    """Lines of a player's notes: may be blank, no control characters."""
+    if not isinstance(value, list) or len(value) > MAX_NOTES:
+        raise ProtocolError("lines must be a list")
+    for line in value:
+        if not isinstance(line, str) or len(line) > MAX_NOTE_LINE:
+            raise ProtocolError(f"a line has at most {MAX_NOTE_LINE} characters")
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in line):
+            raise ProtocolError("a line contains control characters")
+    return value
+
+
 def _match(pattern: re.Pattern, value: Any, what: str) -> str:
     if not isinstance(value, str) or not pattern.fullmatch(value):
         raise ProtocolError(f"invalid {what}")
@@ -189,5 +204,7 @@ def check(message: dict) -> dict:
             if not isinstance(users, list) or len(users) > 500:
                 raise ProtocolError("users must be a list")
             result["users"] = [check_caller({"caller": u}) for u in users]
+        if message.get("lines") is not None:
+            result["lines"] = clean_lines(message["lines"])
         return result
     raise ProtocolError(f"unknown message type {kind!r}")

@@ -237,11 +237,12 @@ def main() -> None:
                 message = json.loads(ws.recv(timeout=10))
                 if message["type"] == "hello" and message.get("app_connected"):
                     messages["hello"] = message
-                elif message["type"] == "state":
+                elif message["type"] == "state" and message["feature"] == "smoke":
                     messages["state"] = message
         hello = messages.get("hello", {})
         check("the WebSocket's hello: logged in, table connected",
-              hello.get("user") == USER and [t["name"] for t in hello.get("tabs", [])] == ["smoke"])
+              hello.get("user") == USER
+              and [t["name"] for t in hello.get("tabs", [])] == ["smoke", "dm-notes"])
         check("the WebSocket's state from the app",
               messages.get("state", {}).get("data") == {"hello": "from the smoke test"})
 

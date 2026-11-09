@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     created       REAL NOT NULL,
     last_used     REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS notes (
+    user          TEXT PRIMARY KEY COLLATE NOCASE REFERENCES accounts (user) ON DELETE CASCADE,
+    text          TEXT NOT NULL
+);
 """
 
 
@@ -142,6 +146,27 @@ class AccountStore:
     @staticmethod
     def _account(row: sqlite3.Row) -> Account:
         return Account(row["user"], row["role"], row["character"], bool(row["must_change"]))
+
+    # ── The game master's notes to a player ───────────────────────────────
+
+    def notes(self, user: str) -> str:
+        rows = self._run("SELECT text FROM notes WHERE user = ?", (user,))
+        return rows[0]["text"] if rows else ""
+
+    def add_notes(self, user: str, lines: list[str]) -> None:
+        """Append lines. ValueError (nothing added) past MAX_NOTES."""
+        with closing(self._connect()) as connection, connection:
+            rows = connection.execute("SELECT text FROM notes WHERE user = ?", (user,)).fetchall()
+            text = "\n".join(([rows[0]["text"]] if rows else []) + lines)
+            if len(text) > protocol.MAX_NOTES:
+                raise ValueError(f"That would be more than {protocol.MAX_NOTES} characters of"
+                                 f" notes; nothing was added.")
+            connection.execute("INSERT INTO notes (user, text) VALUES (?, ?)"
+                               " ON CONFLICT (user) DO UPDATE SET text = excluded.text",
+                               (user, text))
+
+    def clear_notes(self, user: str) -> None:
+        self._run("DELETE FROM notes WHERE user = ?", (user,))
 
     # ── Passwords ─────────────────────────────────────────────────────────
 

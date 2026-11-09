@@ -22,6 +22,8 @@ app and what comes in:
 from __future__ import annotations
 
 import json
+import platform
+import re
 import secrets
 import shlex
 import threading
@@ -32,9 +34,9 @@ from typing import Any, Callable, Optional
 
 import bridge_protocol as protocol
 
-from ..completion import get_arg_parts
+from ..completion import get_arg_parts, tab_completion
 from ..executor import CommandExecutor
-from ..paths import PROJECT_ROOT
+from ..paths import NOTES_DIR, PROJECT_ROOT
 from .actions import PERMISSIONS, Action, Caller, Field
 from .bridge import Bridge, Connection
 
@@ -43,6 +45,10 @@ DEFAULT_SECRET_FILE = "api/bridge.secret"
 VIEW_MODES = ("auto", "webapp", "feature", "generic")    # [api.views]: which view a tab uses
 MAX_VIEW_BYTES = 512 * 1024    # a view's source travels in "ready" (one bridge line)
 ACCOUNTS_TIMEOUT = 5.0         # seconds to wait for the gateway's answer
+# The raw line, not split into words: an apostrophe in a note isn't a quote.
+NOTES_COMMAND = re.compile(r"\s*user\s+notes(?:\s+(\S+))?(?:\s+(\S+))?(?:\s+(.*\S))?\s*$",
+                           re.IGNORECASE)
+CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
 
 API_HELP = """\
 API commands (the player webapp's link to the app):
@@ -52,6 +58,10 @@ API commands (the player webapp's link to the app):
   api user list                             — the gateway's accounts
   api user link <name> <character>          — the character a player acts as
   api user unlink <name>                    — no character
+  api user notes show <name>                — your notes to that player (their DM notes tab)
+  api user notes add <name> <text>          — add a line; no quotes needed
+  api user notes add <name> <file.txt>      — add every line of a file in notes/
+  api user notes clear <name>               — delete that player's notes
 Accounts are created and managed on the gateway's side, not here.
 """
 
@@ -107,6 +117,47 @@ class ApiConfig:
                 print(f"[!] [api.views] {name} = {mode!r} is invalid "
                       f"({' | '.join(VIEW_MODES)}); using 'auto'.")
         return result
+
+
+def note_file(text: str) -> Optional[str]:
+    """The file name, if ``text`` is one .txt file rather than a note: a
+    single word, or a quoted name (for spaces)."""
+    if len(text) > 2 and text[0] == text[-1] and text[0] in "\"'":
+        name = text[1:-1]
+    elif len(text.split()) == 1:
+        name = text
+    else:
+        return None
+    return name if name.lower().endswith(".txt") else None
+
+
+def clean_note(line: str) -> str:
+    return CONTROL_CHARACTERS.sub("", line.replace("\t", "    "))
+
+
+def read_note_file(name: str) -> list[str]:
+    """The lines of a file in the notes folder; ValueError says what's wrong."""
+    path = (NOTES_DIR / name).resolve()
+    if not path.is_relative_to(NOTES_DIR.resolve()):
+        raise ValueError("A notes file must be in the notes/ folder.")
+    try:
+        data = path.read_bytes()
+    except OSError:
+        raise ValueError(f"There is no file {name} in the notes/ folder.") from None
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:          # older Windows editors
+        text = data.decode("cp1252", errors="replace")
+    lines = [clean_note(line) for line in text.splitlines()]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        raise ValueError(f"{name} is empty.")
+    for number, line in enumerate(lines, 1):
+        if len(line) > protocol.MAX_NOTE_LINE:
+            raise ValueError(f"Line {number} of {name} is longer than "
+                             f"{protocol.MAX_NOTE_LINE} characters; nothing was added.")
+    return lines
 
 
 def read_or_create_secret(path: Path) -> str:
@@ -388,6 +439,10 @@ class ApiService:
         return None
 
     def do_api(self, arg: str) -> None:
+        notes = NOTES_COMMAND.match(arg)
+        if notes:
+            self._cmd_notes(*notes.groups())
+            return
         try:
             parts = get_arg_parts(arg)
         except ValueError as exc:
@@ -455,6 +510,33 @@ class ApiService:
         else:
             print(API_HELP)
 
+    def _cmd_notes(self, op: Optional[str], name: Optional[str], text: Optional[str]) -> None:
+        op = (op or "").lower()
+        if not name or (op == "add") != bool(text) or op not in ("show", "add", "clear"):
+            print(API_HELP)
+        elif not protocol.USER_RE.fullmatch(name):
+            print("[!] Account names are 1 to 32 letters, digits, - or _.")
+        elif op == "show":
+            answer = self._accounts("notes_show", user=name)
+            if answer and not answer["ok"]:
+                self._print_answer(answer)
+            elif answer and answer.get("lines"):
+                for line in answer["lines"]:
+                    print(f"    {line}")
+            elif answer:
+                print(f"[i] {name} has no notes.")
+        elif op == "clear":
+            self._print_answer(self._accounts("notes_clear", user=name))
+        else:
+            file = note_file(text)
+            try:
+                lines = read_note_file(file) if file else [clean_note(text)]
+                protocol.clean_lines(lines)
+            except (ValueError, protocol.ProtocolError) as exc:
+                print(f"[!] {exc}")
+                return
+            self._print_answer(self._accounts("notes_add", user=name, lines=lines))
+
     @staticmethod
     def _print_answer(answer: Optional[dict]) -> None:
         if answer:
@@ -465,7 +547,11 @@ class ApiService:
         if len(parts) == 1:
             options = ["status", "open", "close", "user", "help"]
         elif len(parts) == 2 and parts[1] == "user":
-            options = ["list", "link", "unlink"]
+            options = ["list", "link", "unlink", "notes"]
+        elif parts[1:3] == ["user", "notes"] and len(parts) == 3:
+            options = ["show", "add", "clear"]
+        elif parts[1:4] == ["user", "notes", "add"] and len(parts) == 5:
+            return tab_completion(text, [".txt"], platform.system(), "notes")
         else:
             options = []
         return [o for o in options if o.startswith(text)]

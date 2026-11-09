@@ -186,3 +186,5 @@ logs/*
 /api/
 # Character intros: the players' own art, large (see gateway/intros.py).
 /intros/
+# Notes files for players (api user notes add): they can hold spoilers.
+/notes/

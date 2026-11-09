@@ -11,7 +11,7 @@ away), sends players' actions and waits for the app's answer (``action``),
 and answers the app's account requests (``api user …`` in its
 console) from the accounts database. ``on_event(kind, detail)`` hears every
 change: "status" (connected or lost), "state" (a feature), "account" (a
-user whose character changed).
+user whose character changed), "notes" (a user whose notes changed).
 """
 
 from __future__ import annotations
@@ -200,10 +200,12 @@ class BridgeClient:
         elif kind == "accounts":
             answer = await asyncio.to_thread(self.answer_accounts, message)
             if answer:
-                linked = answer.pop("linked", None)
+                linked, noted = answer.pop("linked", None), answer.pop("noted", None)
                 await self.send(answer)
                 if linked:
                     self.on_event("account", linked)
+                if noted:
+                    self.on_event("notes", noted)
         elif kind == "result":
             future = self._pending.get(message.get("id"))
             if future is not None and not future.done():
@@ -216,8 +218,8 @@ class BridgeClient:
             log.warning("Ignored a %r message from the app.", kind)
 
     def answer_accounts(self, request: dict) -> Optional[dict]:
-        """``api user …`` from the app's console: list the accounts, or
-        link a character to one (None unlinks)."""
+        """``api user …`` from the app's console: list the accounts, link
+        a character to one (None unlinks), or a player's notes."""
         request_id = request.get("id")
         if not isinstance(request_id, str) or not protocol.ID_RE.fullmatch(request_id):
             return None
@@ -248,6 +250,34 @@ class BridgeClient:
                 answer.update(ok=True, message=f"{account.user} now plays {character}.")
             if answer["ok"]:
                 answer["linked"] = account.user      # for on_event; not sent
+        elif op in ("notes_show", "notes_add", "notes_clear"):
+            self._answer_notes(op, args, answer)
         else:
             answer["message"] = f"The gateway doesn't know the request {op!r}."
         return answer
+
+    def _answer_notes(self, op: str, args: dict, answer: dict) -> None:
+        user = args.get("user")
+        account = self.accounts.get(user) if isinstance(user, str) else None
+        if account is None:
+            answer["message"] = f"There is no account named {user}."
+            return
+        if op == "notes_show":
+            text = self.accounts.notes(account.user)
+            answer.update(ok=True, message=f"{account.user}'s notes",
+                          lines=text.split("\n") if text else [])
+            return
+        if op == "notes_clear":
+            self.accounts.clear_notes(account.user)
+            answer.update(ok=True, message=f"{account.user}'s notes are cleared.",
+                          noted=account.user)
+            return
+        try:
+            lines = protocol.clean_lines(args.get("lines"))
+            self.accounts.add_notes(account.user, lines)
+        except (protocol.ProtocolError, ValueError) as exc:
+            answer["message"] = str(exc)
+            return
+        count = "1 line" if len(lines) == 1 else f"{len(lines)} lines"
+        answer.update(ok=True, message=f"Added {count} to {account.user}'s notes.",
+                      noted=account.user)

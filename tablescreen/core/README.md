@@ -215,6 +215,9 @@ api close                   close it: the players see the table as offline
 api user list               the gateway's accounts and their characters
 api user link alice Aria    the character an account plays
 api user unlink alice
+api user notes show alice   the game master's notes to that player
+api user notes add alice <text | file.txt>
+api user notes clear alice
 ```
 
 The `api user` commands need an open table, since the gateway answers them. `tools/bridge_test_client.py` stands in for the gateway, to try the application's side by hand; it needs an open table too.
