@@ -10,7 +10,7 @@ The application is split into independent features. Each one can be switched on 
 
 | Feature     | Purpose                                                                                                                                                                         | Documentation                                                      |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| audiowindow | Shows images on a window and plays music                                                                                                                                        | [features/audiowindow](tablescreen/features/audiowindow/README.md) |
+| audiowindow | Shows images on a window, plays music and shows a timer for puzzles                                                                                                             | [features/audiowindow](tablescreen/features/audiowindow/README.md) |
 | combat      | D&D 5e initiative and hit point tracker with a player-facing screen                                                                                                             | [features/combat](tablescreen/features/combat/README.md)           |
 | battlemap   | Battlemap backdrop (image or looping video) with a grid calibrated in physical inches, coordinate labels, sprites, areas of effect, fog of war and a mirror for the game master | [features/battlemap](tablescreen/features/battlemap/README.md)     |
 
