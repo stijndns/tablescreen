@@ -25,6 +25,7 @@ class Timer:
     seconds: float                  # down: the time to count down; up: an offset (timer add)
     ran: float = 0.0                # time it ran before `since`
     since: Optional[float] = None   # monotonic time it last (re)started; None while paused
+    hidden: bool = False            # off the screen; it keeps counting
 
     @classmethod
     def start(cls, mode: str, seconds: float, now: float) -> "Timer":

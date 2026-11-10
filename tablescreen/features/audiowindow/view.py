@@ -181,7 +181,8 @@ class ImageView:
         if ran_out and not self._announced:
             print("[!] The timer ran out.")
         self._announced = ran_out
-        visible = not ran_out or int(now / BLINK_S) % 2 == 0
+        # Hidden: still drawn from the clock (the ran-out line), just not shown.
+        visible = not timer.hidden and (not ran_out or int(now / BLINK_S) % 2 == 0)
         shown = (timer.shown(now), RAN_OUT_COLOR if ran_out else TEXT_COLOR, visible)
         if shown == self._shown:
             return

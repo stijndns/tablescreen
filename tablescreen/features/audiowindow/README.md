@@ -12,9 +12,9 @@ The combat screen uses the same window by default. Whichever was shown last is v
 
 For timed puzzles, a timer can be shown in large digits in the middle of the window, over the image. `timer up` counts up from 0:00; `timer down <time>` counts down, for example `timer down 10:00`, `timer down 1:30:00` (hours:minutes:seconds) or `timer down 90` (seconds). Starting a timer replaces the one that is running and brings the window back from the combat screen.
 
-`timer pause` stops the clock and keeps the digits on the screen; `timer resume` carries on. `timer add <time>` puts more time on the clock and `timer add -<time>` takes some off (`timer add -0:30`); a timer never goes below 0:00. `timer hide` takes it off the screen, and `timer` on its own prints the current time in the console.
+`timer pause` stops the clock and keeps the digits on the screen; `timer resume` carries on. `timer add <time>` puts more time on the clock and `timer add -<time>` takes some off (`timer add -0:30`); a timer never goes below 0:00. `timer hide` takes it off the screen while it keeps counting (or stays paused), and `timer show` puts it back, which also brings the window back from the combat screen. `timer stop` removes the timer altogether. `timer` on its own prints the current time in the console, also while the timer is hidden.
 
-When a countdown reaches 0:00 it stops there, the digits turn red and blink, and the console says "The timer ran out." It makes no sound. Adding time to it starts it again. Times go up to 99:59:59 and are shown as minutes:seconds, or hours:minutes:seconds from an hour on.
+When a countdown reaches 0:00 it stops there, the digits turn red and blink, and the console says "The timer ran out.", also while it is hidden. It makes no sound. Adding time to it starts it again. Times go up to 99:59:59 and are shown as minutes:seconds, or hours:minutes:seconds from an hour on.
 
 The digits are white with a black outline so they stay readable on any image, and they grow and shrink with the window. They are drawn from the clock, not counted, so the timer keeps time exactly, also through pauses.
 
@@ -42,7 +42,8 @@ Audio is played through pygame-ce and does not depend on the windows; it keeps p
 | `timer down <time>`         | Count down from `10:00`, `1:30:00` or `90` (seconds) |
 | `timer pause` / `resume`    | Stop the clock, or carry on                          |
 | `timer add <time>`          | More time; `timer add -<time>` for less              |
-| `timer hide`                | Take the timer off the screen                        |
+| `timer hide` / `show`       | Off the screen (it keeps counting), or back on       |
+| `timer stop`                | Remove the timer                                     |
 | `timer`                     | Print the current time                               |
 | `fullscreen`                | Borderless fullscreen on the current monitor         |
 | `minimize`                  | Minimise the window                                  |
