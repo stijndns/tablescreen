@@ -1,5 +1,5 @@
 """
-audiowindow — Display images and play music.
+audiowindow — Display images, play music, and show a puzzle timer.
 
 The original AudioWindowCMD functionality, as a feature. Owns its own image
 state, its views, and an audio player; knows nothing about combat, the
@@ -19,15 +19,30 @@ act directly rather than going through the bus.
 from __future__ import annotations
 
 import platform
+import time
+from dataclasses import replace
 
 from PIL import Image
 
 from ...core.completion import tab_completion
 from ...core.feature import FeatureBase, ShellServices
 from .audio import AudioPlayer, AUDIO_EXTENSIONS
+from .timer import Timer, format_time, parse_duration
 from .view import ImageView
 
 CURRENT_OS = platform.system()
+
+TIMER_HELP = """\
+timer up             count up from 0:00
+timer down <time>    count down from 10:00, 1:30:00 (h:mm:ss) or 90 (seconds)
+timer pause          stop the clock; it stays on the screen
+timer resume         carry on
+timer add <time>     more time; -<time> for less (timer add -0:30)
+timer hide           take it off the screen; it keeps counting
+timer show           put it back on the screen
+timer stop           remove the timer
+timer                the current time, in the console"""
+TIMER_VERBS = ("pause", "resume", "add", "hide", "show", "stop")
 
 
 class AudiowindowFeature(FeatureBase):
@@ -39,7 +54,7 @@ class AudiowindowFeature(FeatureBase):
     # import time, before the Tk root exists.
     def __init__(self) -> None:
         super().__init__()
-        self.state: dict = {"image": None}
+        self.state: dict = {"image": None, "timer": None}
         self.audio = AudioPlayer()
         self.slot = None
 
@@ -77,6 +92,10 @@ class AudiowindowFeature(FeatureBase):
         services.register_command(
             "stop", self._do_stop,
             help_text="stop — stop playback.")
+        services.register_command(
+            "timer", self._do_timer, self._complete_timer,
+            help_text="timer up | down <time> | pause | resume | add <time> | hide | show"
+                      " | stop — a timer over the image.")
 
         services.subscribe(self._on_message)
 
@@ -128,6 +147,94 @@ class AudiowindowFeature(FeatureBase):
     def _do_stop(self, arg: str) -> None:
         self.audio.stop()
 
+    def _do_timer(self, arg: str) -> None:
+        words = arg.split()
+        timer: Timer | None = self.state["timer"]
+        now = time.monotonic()
+        verb = words[0].lower() if words else ""
+
+        if not words:
+            print(self._timer_status(timer, now))
+            return
+        if verb == "up" and len(words) == 1:
+            self._set_timer(Timer.start("up", 0, now), take_screen=True)
+            print("[+] Timer counting up from 0:00.")
+            return
+        if verb == "down" and len(words) == 2:
+            try:
+                seconds = parse_duration(words[1])
+            except ValueError as exc:
+                print(f"[!] {exc}")
+                return
+            if seconds <= 0:
+                print("[!] A countdown needs some time: timer down 10:00.")
+                return
+            self._set_timer(Timer.start("down", seconds, now), take_screen=True)
+            print(f"[+] Timer counting down from {format_time(seconds)}.")
+            return
+        if verb not in TIMER_VERBS or len(words) != (2 if verb == "add" else 1):
+            print(TIMER_HELP)
+            return
+        if timer is None:
+            print("[!] There is no timer: start one with 'timer up' or 'timer down <time>'.")
+            return
+        if verb == "stop":
+            self._set_timer(None)
+            print("[+] Timer stopped.")
+        elif verb == "hide":
+            if timer.hidden:
+                print("[i] The timer is already hidden.")
+            else:
+                self._set_timer(replace(timer, hidden=True))
+                still = ("has run out" if timer.ran_out(now) else "stays paused" if timer.paused
+                         else "keeps counting")
+                print(f"[+] Timer hidden at {timer.shown(now)}; it {still}."
+                      f" 'timer show' brings it back.")
+        elif verb == "show":
+            if not timer.hidden:
+                print("[i] The timer is on the screen.")
+            else:
+                self._set_timer(replace(timer, hidden=False), take_screen=True)
+                print(f"[+] Timer shown at {timer.shown(now)}.")
+        elif verb == "pause":
+            if timer.paused:
+                print("[i] The timer is already paused.")
+            elif timer.ran_out(now):
+                print("[i] The timer has run out.")
+            else:
+                self._set_timer(timer.pause(now))
+                print(f"[+] Timer paused at {timer.shown(now)}.")
+        elif verb == "resume":
+            if not timer.paused:
+                print("[i] The timer is running.")
+            else:
+                self._set_timer(timer.resume(now))
+                print(f"[+] Timer running again from {timer.shown(now)}.")
+        else:
+            try:
+                seconds = parse_duration(words[1], allow_negative=True)
+            except ValueError as exc:
+                print(f"[!] {exc}")
+                return
+            timer = timer.add(seconds, now)
+            self._set_timer(timer)
+            print(f"[+] Timer now at {timer.shown(now)}.")
+
+    def _set_timer(self, timer: Timer | None, take_screen: bool = False) -> None:
+        self.state["timer"] = timer          # a frozen record, replaced whole
+        self.services.send(self.name, "timer", take_screen)
+
+    @staticmethod
+    def _timer_status(timer: Timer | None, now: float) -> str:
+        if timer is None:
+            return "[i] No timer: start one with 'timer up' or 'timer down <time>'."
+        what = "counting up" if timer.mode == "up" else "counting down"
+        flags = [flag for flag, on in (("ran out", timer.ran_out(now)),
+                                       ("paused", timer.paused and not timer.ran_out(now)),
+                                       ("hidden", timer.hidden)) if on]
+        state = f" ({', '.join(flags)})" if flags else ""
+        return f"[i] Timer {what}: {timer.shown(now)}{state}."
+
     # ── Bus consumer (mainloop thread — safe to touch widgets) ────────────
 
     def _on_message(self, message) -> None:
@@ -135,6 +242,10 @@ class AudiowindowFeature(FeatureBase):
 
         if message.command == "show":
             self.slot.show()      # takes the screen back from any other slot
+            self.refresh()
+        elif message.command == "timer":
+            if message.arg:       # a new or re-shown timer takes the screen, like show
+                self.slot.show()
             self.refresh()
         elif message.command == "fullscreen":
             monitor = window.fullscreen()
@@ -160,6 +271,11 @@ class AudiowindowFeature(FeatureBase):
         return tab_completion(self._clean(text, line),
                               list(Image.registered_extensions()),
                               CURRENT_OS, "image")
+
+    def _complete_timer(self, text, line, begidx, endidx) -> list[str]:
+        if len(line[:begidx].split()) != 1:
+            return []
+        return [w for w in ("up", "down", *TIMER_VERBS) if w.startswith(text)]
 
     def _complete_play(self, text, line, begidx, endidx) -> list[str]:
         return tab_completion(self._clean(text, line),

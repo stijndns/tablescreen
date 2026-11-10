@@ -8,6 +8,16 @@ The audiowindow feature is the original core of the project: it shows images on 
 
 The combat screen uses the same window by default. Whichever was shown last is visible: `show` takes the window over from the combat screen, and `combat show` gives it back.
 
+## Timer
+
+For timed puzzles, a timer can be shown in large digits in the middle of the window, over the image. `timer up` counts up from 0:00; `timer down <time>` counts down, for example `timer down 10:00`, `timer down 1:30:00` (hours:minutes:seconds) or `timer down 90` (seconds). Starting a timer replaces the one that is running and brings the window back from the combat screen.
+
+`timer pause` stops the clock and keeps the digits on the screen; `timer resume` carries on. `timer add <time>` puts more time on the clock and `timer add -<time>` takes some off (`timer add -0:30`); a timer never goes below 0:00. `timer hide` takes it off the screen while it keeps counting (or stays paused), and `timer show` puts it back, which also brings the window back from the combat screen. `timer stop` removes the timer altogether. `timer` on its own prints the current time in the console, also while the timer is hidden.
+
+When a countdown reaches 0:00 it stops there, the digits turn red and blink, and the console says "The timer ran out.", also while it is hidden. It makes no sound. Adding time to it starts it again. Times go up to 99:59:59 and are shown as minutes:seconds, or hours:minutes:seconds from an hour on.
+
+The digits are white with a black outline so they stay readable on any image, and they grow and shrink with the window. They are drawn from the clock, not counted, so the timer keeps time exactly, also through pauses.
+
 ## Music
 
 `play <file>` plays a music file or sound effect from `assets/audio`. MP3, WAV and OGG are supported. Starting a new file replaces the one that is playing.
@@ -28,6 +38,13 @@ Audio is played through pygame-ce and does not depend on the windows; it keeps p
 | `play <file>`               | Play a file from `assets/audio`                      |
 | `stop`                      | Stop playback                                        |
 | `volume` / `volume <0-100>` | Print or set the volume                              |
+| `timer up`                  | Show a timer counting up from 0:00                   |
+| `timer down <time>`         | Count down from `10:00`, `1:30:00` or `90` (seconds) |
+| `timer pause` / `resume`    | Stop the clock, or carry on                          |
+| `timer add <time>`          | More time; `timer add -<time>` for less              |
+| `timer hide` / `show`       | Off the screen (it keeps counting), or back on       |
+| `timer stop`                | Remove the timer                                     |
+| `timer`                     | Print the current time                               |
 | `fullscreen`                | Borderless fullscreen on the current monitor         |
 | `minimize`                  | Minimise the window                                  |
 | `restore`                   | Default size; reopens the window after it was closed |
@@ -37,5 +54,6 @@ Audio is played through pygame-ce and does not depend on the windows; it keeps p
 | File          | Contents                                                  |
 | ------------- | --------------------------------------------------------- |
 | `__init__.py` | The feature: commands, window controls and tab completion |
-| `view.py`     | Draws an image, scaled to fit, into its frame             |
+| `view.py`     | Draws an image, scaled to fit, and the timer over it      |
+| `timer.py`    | The timer's time: counting, pausing, adding; no drawing   |
 | `audio.py`    | Music playback and volume                                 |
