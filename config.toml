@@ -28,6 +28,20 @@ coords_location = "sides"   # sides | cells
 # coords_color = "#ffffff"  # defaults to grid_color
 aoe_hatching = true         # hatch lines inside areas of effect (false: outline only)
 
+[api]
+# The player webapp. Off unless enabled; the gateway (a separate program)
+# connects to the app over the bridge below, once 'api open' opens the table.
+enabled = false
+share = ["combat"]          # one webapp tab per feature listed here
+bridge_host = "127.0.0.1"
+bridge_port = 8765
+secret_file = "api/bridge.secret"   # created on first start; the gateway reads it too
+
+[api.views]
+# Which view a webapp tab uses: "auto" (the webapp's own if there is one,
+# else the feature's, else a generic one) or forced "webapp" | "feature" | "generic".
+combat = "auto"
+
 [windows]
 mainscreen = "800x600"
 battlemap = "1200x900"

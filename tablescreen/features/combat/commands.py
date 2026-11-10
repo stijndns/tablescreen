@@ -23,9 +23,10 @@ import platform
 from PIL import Image
 
 from ...core.completion import get_arg_parts, tab_completion
+from ...core.executor import NoAnswer
 from ...core.paths import COMBATANT_IMAGES_DIR, COMBATANTS_DIR
 from . import persistence, prompts
-from .model import Type
+from .model import Status, Type
 from .views.layout import LAYOUTS, TEXT_SCALE_RANGE, text_scale_from_text
 
 CURRENT_OS = platform.system()
@@ -38,10 +39,21 @@ Combat tracker commands:
   combat add <name> <init> <type> <hp>        — add combatant
                                                 type: pc | npc | monster
                                                 e.g.  combat add Aria 18 pc 120
+                                                init ? = entered later (e.g. by
+                                                the player on the webapp)
   combat add <name> <init> <type> <hp> <cur>  — add with current HP ≠ max
-  combat start                                — begin combat (sort by initiative)
+  combat initiative <name> <value>            — enter or change an initiative
+                                                (during combat: only at the start
+                                                of a round, or a missing one)
+  combat start                                — begin combat (sort by initiative);
+                                                with initiatives missing, wait for
+                                                them first (rolling initiative)
+  combat ties                                 — set the order of tied initiatives
   combat status                               — print full DM status table
-  combat end                                  — end combat, clear roster
+  combat status <name> <status>               — set a status: active | dying |
+                                                incapacitated | dead
+  combat end                                  — end combat, clear roster (while
+                                                rolling initiative: stop waiting)
   combat noreaction                           — add next combatant WITHOUT a reaction slot
                                                 (use before the next 'combat add')
   combat remove <name>                        — remove a combatant (grey [LEFT COMBAT] if active)
@@ -51,6 +63,8 @@ Combat tracker commands:
   combat action <actor> heal <target> <amount>           — heal
   combat action <actor> condition <target> <condition>   — apply condition
   combat action <actor> remove_condition <target> <cond> — remove condition
+    … uses reaction | legendary | none        — out of turn: what the action costs
+                                                (otherwise the shell asks)
   combat image <name> <filename>              — assign an image to a combatant
   combat export <filename>                    — export roster to combatants/<filename>.json
                                                 (also during combat: current HP kept,
@@ -112,8 +126,14 @@ class CombatCommandsMixin:
             self._cmd_add(rest)
         elif sub == "start":
             self._cmd_start()
-        elif sub == "status":
+        elif sub == "status" and not rest:
             print("\n".join(self.combat.status()))
+        elif sub == "status":
+            self._cmd_status(rest)
+        elif sub == "initiative":
+            self._cmd_initiative(rest)
+        elif sub == "ties":
+            self._cmd_ties()
         elif sub == "end":
             self._cmd_end()
         elif sub == "remove":
@@ -175,7 +195,29 @@ class CombatCommandsMixin:
     # ── combat sub-commands ───────────────────────────────────────────────
 
     def _cmd_start(self) -> None:
-        prompts.resolve_ties(self.combat)
+        missing = self.combat.missing_initiative()
+        if missing:
+            # No combat until every initiative is in: wait for them.
+            names = ", ".join(c.name for c in missing)
+            if self.combat.rolling:
+                print(f"[i] Still waiting for initiative from: {names}.")
+            else:
+                self.combat.rolling = True
+                print(f"[+] Rolling initiative. Waiting for: {names}.\n"
+                      f"    Enter them with 'combat initiative <name> <value>' (players can "
+                      f"enter their own); combat starts when the last one is in.")
+                self.refresh_views()
+            return
+        try:
+            prompts.resolve_ties(self.combat)
+        except NoAnswer:
+            # The last initiative came from elsewhere (a player): ties are the DM's.
+            ties = ", ".join(f"{value} ({', '.join(c.name for c in tied)})"
+                             for value, tied in sorted(self.combat.tied_initiatives().items(),
+                                                       reverse=True))
+            print(f"[i] All initiatives are in. Tied: {ties}. "
+                  f"Type 'combat start' to set their order and begin.")
+            return
         message = self.combat.start()
         print(f"[+] {message}")
         self.show_combat_view()
@@ -186,7 +228,66 @@ class CombatCommandsMixin:
             first = self.combat.current_combatant()
             self.log.log_turn_marker(first.name, 1, new_round=False)
 
+    def _cmd_initiative(self, parts: list[str]) -> None:
+        if len(parts) != 2:
+            print("Usage: combat initiative <name> <value>")
+            return
+        try:
+            value = int(parts[1])
+        except ValueError:
+            print("[!] Initiative must be a whole number.")
+            return
+        try:
+            message = self.combat.set_initiative(parts[0], value)
+        except ValueError as exc:
+            print(f"[!] {exc}")
+            return
+        print(f"[+] {message}")
+        if self.combat.active:
+            self.log.log_entry(f"[initiative] {message}")
+            tied = self.combat.tied_initiatives().get(value)
+            if tied:
+                try:
+                    prompts.resolve_ties_for(self.combat, value, tied)
+                except NoAnswer:
+                    print(f"[i] Tie at {value} ({', '.join(c.name for c in tied)}): "
+                          f"type 'combat ties' to set their order.")
+            self.refresh_views()
+        elif self.combat.rolling:
+            missing = self.combat.missing_initiative()
+            if missing:
+                print(f"[i] Still waiting for: {', '.join(c.name for c in missing)}.")
+            else:
+                self._cmd_start()       # the last one is in
+
+    def _cmd_ties(self) -> None:
+        if not self.combat.tied_initiatives():
+            print("[i] No tied initiatives.")
+            return
+        prompts.resolve_ties(self.combat)
+        self.refresh_views()
+
+    def _cmd_status(self, parts: list[str]) -> None:
+        statuses = " | ".join(s.value for s in Status)
+        if len(parts) != 2 or parts[1].lower() not in {s.value for s in Status}:
+            print(f"Usage: combat status <name> {statuses}")
+            return
+        combatant = self.combat.get(parts[0])
+        if combatant is None:
+            print(f"[!] No combatant named '{parts[0]}'.")
+            return
+        combatant.status = Status(parts[1].lower())
+        print(f"[+] {combatant.name} is now [{combatant.status.value.upper()}].")
+        self.log.log_entry(f"[status] {combatant.name} → "
+                           f"[{combatant.status.value.upper()}] (set by the DM).")
+        self.refresh_views()
+
     def _cmd_end(self) -> None:
+        if self.combat.rolling and not self.combat.active:
+            self.combat.rolling = False
+            print("[+] Stopped waiting for initiative; the roster is kept.")
+            self.refresh_views()
+            return
         if not self.log.check_unsaved_log():
             return
         message = self.combat.end()
@@ -200,12 +301,12 @@ class CombatCommandsMixin:
             return
         name = parts[0]
         try:
-            initiative = int(parts[1])
+            initiative = None if parts[1] == "?" else int(parts[1])
             ctype = parts[2].lower()
             hp_max = int(parts[3])
             hp_current = int(parts[4]) if len(parts) >= 5 else None
         except ValueError:
-            print("[!] initiative, hp_max, and hp_current must be integers.")
+            print("[!] initiative (or ?), hp_max, and hp_current must be integers.")
             return
 
         if ctype not in Type:
@@ -227,7 +328,7 @@ class CombatCommandsMixin:
 
         if self.combat.active:
             ties = self.combat.tied_initiatives()
-            if initiative in ties:
+            if initiative is not None and initiative in ties:
                 prompts.resolve_ties_for(self.combat, initiative, ties[initiative])
             self.log.log_entry(f"[combat add] {combatant.summary()}")
             self.refresh_views()
@@ -306,6 +407,18 @@ class CombatCommandsMixin:
                   "remove_condition <target> [args]")
             return
 
+        uses = None
+        if len(parts) >= 2 and parts[-2].lower() == "uses":
+            uses = parts[-1].lower()
+            parts = parts[:-2]
+            if uses not in prompts.USES:
+                print(f"[!] 'uses' takes {' | '.join(prompts.USES)}, not '{uses}'.")
+                return
+            if len(parts) < 3:
+                print("Usage: combat action <actor> damage|heal|condition|"
+                      "remove_condition <target> [args] [uses reaction|legendary|none]")
+                return
+
         actor_name, action_type, target_name = parts[0], parts[1].lower(), parts[2]
         rest = parts[3:]
 
@@ -325,7 +438,15 @@ class CombatCommandsMixin:
 
         # Ask about the resource BEFORE acting, so a cancelled/invalid action
         # does not leave a resource spent.
-        resource_key = prompts.prompt_resource_spend(self.combat, actor)
+        try:
+            resource_key = prompts.prompt_resource_spend(self.combat, actor, uses)
+        except ValueError as exc:
+            print(f"[!] {exc}")
+            return
+        except NoAnswer:
+            print(f"[!] {actor.name} acts outside their turn: add "
+                  f"'uses reaction|legendary|none' to say what it costs.")
+            return
         amount: int | str = ""
 
         if action_type in ("damage", "heal"):
@@ -625,7 +746,8 @@ class CombatCommandsMixin:
         parts = get_arg_parts(line[:begidx])
         top_subs = ["new", "add", "start", "status", "end", "show", "screen",
                     "noreaction", "reset", "legendary", "action", "log",
-                    "export", "import", "image", "remove", "layout", "scale"]
+                    "export", "import", "image", "remove", "layout", "scale",
+                    "initiative", "ties"]
 
         if len(parts) == 1:
             return [s for s in top_subs if s.startswith(text)]
@@ -639,8 +761,15 @@ class CombatCommandsMixin:
                         for m in glob.glob(pattern)]
             return []
 
-        if sub == "remove":
+        if sub in ("remove", "initiative"):
             return self._names(text) if len(parts) == 2 else []
+
+        if sub == "status":
+            if len(parts) == 2:
+                return self._names(text)
+            if len(parts) == 3:
+                return [s.value for s in Status if s.value.startswith(text.lower())]
+            return []
 
         if sub == "layout":
             return [s for s in LAYOUTS if s.startswith(text)] if len(parts) == 2 else []
@@ -668,6 +797,10 @@ class CombatCommandsMixin:
             if target:
                 return [c for c in target.conditions
                         if c.lower().startswith(text.lower())]
+        if len(parts) >= 6 and parts[-1].lower() == "uses":
+            return [u for u in prompts.USES if u.startswith(text.lower())]
+        if len(parts) >= 6 and "uses" not in (p.lower() for p in parts):
+            return ["uses"] if "uses".startswith(text.lower()) else []
         return []
 
     def complete_hp(self, text, line, begidx, endidx) -> list[str]:

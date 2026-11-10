@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in · Tablescreen</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/common.js" defer></script>
+  <script src="/static/login.js" defer></script>
+</head>
+<body>
+  <div class="temple">
+    <div class="cornice" aria-hidden="true"></div>
+    <div class="column left" aria-hidden="true"><span class="cap"></span><span class="shaft"></span><span class="base"></span></div>
+    <div class="column right" aria-hidden="true"><span class="cap"></span><span class="shaft"></span><span class="base"></span></div>
+    <header class="bar">
+      <h1>Tablescreen</h1>
+    </header>
+    <main>
+      <form id="form" class="card">
+        <h2>Log in</h2>
+        <label>Name
+          <input name="user" autocomplete="username" autocapitalize="none"
+                 autocorrect="off" spellcheck="false" maxlength="32" required>
+        </label>
+        <label>Password
+          <input name="password" type="password" autocomplete="current-password"
+                 maxlength="128" required>
+        </label>
+        <p id="error" class="error" hidden></p>
+        <nav class="actions">
+          <button type="submit">Log in</button>
+          <a class="button secondary" href="/">Watch as a guest</a>
+        </nav>
+      </form>
+    </main>
+  </div>
+  <!-- Roughens the parchment's outline (style.css, .card::before). -->
+  <svg class="defs" aria-hidden="true" focusable="false">
+    <filter id="torn" x="-3%" y="-3%" width="106%" height="106%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="3" seed="7" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="9" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </svg>
+</body>
+</html>

@@ -1,0 +1,76 @@
+"""
+python -m gateway [options] — Start the gateway (see --help).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import socket
+import sys
+
+import uvicorn
+
+from . import settings as gateway_settings
+from .accounts import AccountStore
+from .bridge_client import BridgeClient
+from .intros import Intros
+from .web import create_app
+
+
+def lan_addresses() -> list[str]:
+    """This machine's IPv4 addresses other than loopback, to print the
+    webapp's links."""
+    found = set()
+    try:
+        found.update(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        pass
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        try:
+            probe.connect(("192.0.2.1", 9))      # TEST-NET-1: nothing is sent
+            found.add(probe.getsockname()[0])
+        except OSError:
+            pass
+    return sorted(a for a in found if not a.startswith("127."))
+
+
+def main() -> None:
+    settings = gateway_settings.parse()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
+                        datefmt="%H:%M:%S")
+    log = logging.getLogger("gateway")
+
+    if not settings.cert_file.exists() or not settings.key_file.exists():
+        sys.exit(f"No certificate in {settings.cert_file} / {settings.key_file}:"
+                 f" make one first with 'python tools/make_cert.py new'.")
+    accounts = AccountStore(settings.accounts_file)
+    if not accounts.exists():
+        sys.exit(f"No accounts in {settings.accounts_file}: prepare them first with"
+                 f" 'python tools/prepare_accounts.py <name>:<role> …'.")
+    accounts.create()                   # tables a newer gateway added, if any
+    purged = accounts.purge_sessions()
+    if purged:
+        log.info("Forgot %d sessions unused for 30 days.", purged)
+
+    bridge = BridgeClient(settings.bridge_host, settings.bridge_port,
+                          settings.secret_file, accounts)
+    app = create_app(accounts, bridge, intros=Intros(settings.intros).load(),
+                     background=(bridge.run,))
+
+    if os.environ.get("TABLESCREEN_GATEWAY_IN_CONTAINER"):
+        # Its own addresses mean nothing outside; the PC's port is compose's.
+        port = os.environ.get("TABLESCREEN_GATEWAY_PUBLIC_PORT", str(settings.port))
+        log.info("The webapp: https://<this PC's LAN address>:%s (in a container;"
+                 " the bridge is %s:%s).", port, settings.bridge_host, settings.bridge_port)
+    else:
+        links = [f"https://{a}:{settings.port}" for a in lan_addresses()]
+        log.info("The webapp: %s", ", ".join(links) or f"https://localhost:{settings.port}")
+    uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning",
+                access_log=False, ssl_certfile=str(settings.cert_file),
+                ssl_keyfile=str(settings.key_file),
+                ws_max_size=64 * 1024)      # pages send nothing big; pings find dead ones
+
+
+if __name__ == "__main__":
+    main()

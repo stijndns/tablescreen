@@ -17,6 +17,8 @@ class Combat:
         self.round: int = 0
         self.turn_index: int = 0        # index into sorted active list
         self.active: bool = False
+        # `combat start` with initiatives missing: no combat until they're in.
+        self.rolling: bool = False
 
     # ── Building the encounter ───────────────────────────────────────────────
 
@@ -24,7 +26,7 @@ class Combat:
         self,
         name: str,
         combatant_type: str,
-        initiative: int,
+        initiative: Optional[int],
         hp_max: int,
         hp_current: Optional[int] = None,
         add_reaction: bool = True,
@@ -78,14 +80,45 @@ class Combat:
     # ── Turn flow ────────────────────────────────────────────────────────────
 
     def _order(self) -> list[Combatant]:
-        """Return combatants sorted by initiative descending, tiebreaker ascending."""
-        return sorted(self.combatants, key=lambda c: (-c.initiative, c.tiebreaker))
+        """Return combatants sorted by initiative descending, tiebreaker
+        ascending; those without an initiative yet come last."""
+        return sorted(self.combatants, key=lambda c: (c.initiative is None,
+                                                      -(c.initiative or 0), c.tiebreaker))
+
+    def missing_initiative(self) -> list[Combatant]:
+        """Combatants still taking part whose initiative isn't entered yet."""
+        return [c for c in self.combatants if c.initiative is None and not c.left_combat]
+
+    def set_initiative(self, name: str, value: int) -> str:
+        """Enter or change one initiative. Before combat: any time. During
+        combat: a missing one any time (that combatant isn't in the order yet
+        and joins next round), a change only while the round's first
+        combatant is active, so the order never changes mid-round. Raises
+        ValueError with the reason otherwise."""
+        c = self.get(name)
+        if c is None:
+            raise ValueError(f"No combatant named '{name}'.")
+        if self.active and c.initiative is not None and self.turn_index != 0:
+            raise ValueError("During combat, initiative can only change at the start "
+                             "of a round (while its first combatant is active).")
+        first_before = self.current_combatant() if self.active and self._in_combat_order() else None
+        c.initiative = value
+        c.tiebreaker = 0
+        if first_before is not None and c.is_in_combat():
+            first = self._in_combat_order()[0]
+            if first is not first_before:
+                self._begin_turn(first)      # the new first combatant's turn
+                return f"{c.name}: initiative {value}; {first.name} now goes first."
+        return f"{c.name}: initiative {value}."
 
     def start(self) -> str:
         if not self.combatants:
             return "[!] No combatants added yet."
         if not self._in_combat_order():
             return "[!] All combatants are pending."
+        if self.missing_initiative():
+            raise ValueError("initiatives are missing")    # callers check first
+        self.rolling = False
         self.active = True
         self.round = 1
         self.turn_index = 0
@@ -113,9 +146,10 @@ class Combat:
         if self.turn_index >= len(order):
             self.turn_index = 0
             self.round += 1
-            # Clear pending flags — all pending combatants enter rotation this round
+            # Pending combatants enter rotation this round, once their
+            # initiative is in: no initiative, no turn.
             for c in self.combatants:
-                c.pending = False
+                c.pending = c.initiative is None
             new_round_msg = f"\n  *** Round {self.round} begins! ***"
 
         # Re-fetch order after potential pending changes
@@ -124,17 +158,23 @@ class Combat:
         # Mark the incoming combatant as having acted (reveals monsters on player screen)
         # Also reset reaction and legendary actions at the start of their turn (D&D convention)
         next_c = order[self.turn_index]
-        next_c.has_acted = True
-        if "reaction" in next_c.resources:
-            next_c.resources["reaction"].reset()
-        if "legendary_actions" in next_c.resources:
-            next_c.resources["legendary_actions"].reset()
+        self._begin_turn(next_c)
         return f"Next turn: {next_c.name} (Initiative {next_c.initiative}){new_round_msg}"
+
+    @staticmethod
+    def _begin_turn(c: Combatant) -> None:
+        """Their turn starts: revealed on the player screen, and their Reaction
+        and legendary actions refill (D&D convention)."""
+        c.has_acted = True
+        if "reaction" in c.resources:
+            c.resources["reaction"].reset()
+        if "legendary_actions" in c.resources:
+            c.resources["legendary_actions"].reset()
 
     def tied_initiatives(self) -> dict[int, list[Combatant]]:
         """Return a dict of initiative value → combatants for all values with 2+ combatants."""
         from collections import Counter
-        counts = Counter(c.initiative for c in self.combatants)
+        counts = Counter(c.initiative for c in self.combatants if c.initiative is not None)
         return {
             val: [c for c in self.combatants if c.initiative == val]
             for val, count in counts.items() if count > 1
@@ -156,6 +196,7 @@ class Combat:
 
     def end(self) -> str:
         self.active = False
+        self.rolling = False
         self.combatants = []
         self.round = 0
         self.turn_index = 0
@@ -174,7 +215,8 @@ class Combat:
             return ["[i] No active combat."]
         order = self._order()
         lines = [
-            f"══ Round {self.round} {'(active)' if self.active else '(not started)'} ══",
+            f"══ Round {self.round} "
+            f"{'(active)' if self.active else '(rolling initiative)' if self.rolling else '(not started)'} ══",
         ]
         current = self.current_combatant() if self.active else None
         for i, c in enumerate(order):
@@ -199,6 +241,7 @@ class Combat:
                    if self.active and self.turn_index < len(order) else None)
         return {
             "active": self.active,
+            "rolling": self.rolling,
             "round": self.round,
             "combatants": deepcopy(self.display_order()),
             "current": current.name if current else None,   # names are unique

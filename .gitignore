@@ -182,3 +182,9 @@ pyrightconfig.json
 # Combat logs are session output, not source.
 logs/*
 !logs/.gitkeep
+# The API's local files: the bridge secret (never commit it).
+/api/
+# Character intros: the players' own art, large (see gateway/intros.py).
+/intros/
+# Notes files for players (api user notes add): they can hold spoilers.
+/notes/

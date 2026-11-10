@@ -16,12 +16,23 @@ on, so they carry no feature state of their own.
 
 from __future__ import annotations
 
-from ...core.console import ask
+from ...core.console import ask, can_ask
+from ...core.executor import NoAnswer
 from .model import Combat, Combatant, Status
 
 # Resource keys these prompts may return.
 NO_RESOURCE = "none"
 SPECIAL_CASE = "special"
+
+# `combat action … uses <word>`: the out-of-turn answer given up front.
+USES = {"reaction": "reaction", "legendary": "legendary_actions", "none": SPECIAL_CASE}
+
+
+def _need_console() -> None:
+    """Give up before printing a menu nobody can answer (e.g. a player's
+    action from the webapp); callers turn this into a notice."""
+    if not can_ask():
+        raise NoAnswer("it needs an answer, so type the command in the console")
 
 
 # ── Zero-HP status ──────────────────────────────────────────────────────
@@ -32,6 +43,7 @@ def prompt_zero_hp_status(combatant: Combatant) -> Status:
     A combatant already dying gets a shorter menu — they can only die or
     stay dying.
     """
+    _need_console()
     if combatant.status is Status.DYING:
         print(f"[?] {combatant.name} is already DYING and took more damage.")
         print("    1. Dead")
@@ -69,7 +81,14 @@ def apply_zero_hp_status(combatant: Combatant, log) -> None:
     if combatant.status is Status.DEAD:
         return
 
-    new_status = prompt_zero_hp_status(combatant)
+    try:
+        new_status = prompt_zero_hp_status(combatant)
+    except NoAnswer:
+        # Not typed in the console (e.g. a player's action): the DM decides.
+        print(f"[!] {combatant.name} dropped to 0 HP: set the status with "
+              f"'combat status {combatant.name} dead|dying|incapacitated'.")
+        log.log_entry(f"[status] {combatant.name} at 0 HP; status left to the DM.")
+        return
     combatant.status = new_status
     print(f"    [+] {combatant.name} is now [{new_status.value.upper()}].")
     log.log_entry(f"[status] {combatant.name} → [{new_status.value.upper()}].")
@@ -77,15 +96,26 @@ def apply_zero_hp_status(combatant: Combatant, log) -> None:
 
 # ── Out-of-turn resource spend ──────────────────────────────────────────
 
-def prompt_resource_spend(combat: Combat, actor: Combatant) -> str:
-    """Ask which resource an out-of-turn action costs.
+def prompt_resource_spend(combat: Combat, actor: Combatant,
+                          uses: str | None = None) -> str:
+    """Ask which resource an out-of-turn action costs, unless ``uses``
+    (reaction | legendary | none) already says.
 
     Returns a resource key, ``SPECIAL_CASE`` (acted with no cost), or
     ``NO_RESOURCE`` when it is the actor's own turn and nothing is spent.
+    Raises ValueError when ``uses`` names a resource the actor doesn't have.
     """
     if combat.current_combatant().name == actor.name:
         return NO_RESOURCE      # their own turn — no prompt needed
 
+    if uses is not None:
+        key = USES[uses]
+        if key != SPECIAL_CASE and key not in actor.resources:
+            label = "a Reaction" if uses == "reaction" else "legendary actions"
+            raise ValueError(f"{actor.name} has no {label}.")
+        return key
+
+    _need_console()
     options: list[tuple[str, str]] = []
     for key, label in (("reaction", "Reaction"),
                        ("legendary_actions", "Legendary Actions")):
@@ -125,6 +155,7 @@ def apply_resource_spend(actor: Combatant, resource_key: str) -> None:
 
 def resolve_ties_for(combat: Combat, initiative: int, tied: list) -> None:
     """Ask the DM to order combatants sharing an initiative value."""
+    _need_console()
     names = [c.name for c in tied]
     print(f"\n[?] Initiative tie at {initiative} between:")
     for i, name in enumerate(names, 1):

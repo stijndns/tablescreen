@@ -14,12 +14,13 @@ import os
 import shlex
 from pathlib import Path
 
-from .paths import AUDIO_DIR, COMBATANT_IMAGES_DIR, IMAGES_DIR
+from .paths import AUDIO_DIR, COMBATANT_IMAGES_DIR, IMAGES_DIR, NOTES_DIR
 
 _BASE_DIRS: dict[str, Path] = {
     "image": IMAGES_DIR,
     "audio": AUDIO_DIR,
     "combatant_image": COMBATANT_IMAGES_DIR,
+    "notes": NOTES_DIR,
 }
 
 

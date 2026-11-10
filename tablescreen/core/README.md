@@ -1,6 +1,6 @@
 # Core
 
-The core is the framework the features plug into. It owns the shell, the windows and the message bus, reads the configuration and loads the enabled features. It contains no game logic of its own.
+The core is the framework the features plug into. It owns the shell, the windows and the message bus, reads the configuration and loads the enabled features. It also owns the player webapp's way in, the API. It contains no game logic of its own.
 
 ## Two rules
 
@@ -22,6 +22,9 @@ The architecture rests on two rules, and most design decisions follow from them.
 | `feature.py` | The `Feature` protocol, `ShellServices` and the optional `FeatureBase` |
 | `paths.py` | Locations of `assets/`, `combatants/` and `logs/`, independent of the working directory |
 | `completion.py` | Tab completion for file names and argument splitting that respects quotes |
+| `api/service.py` | `ApiService`: the player webapp's input source. Sends the shared features' public states, runs the players' actions, and the `api` command |
+| `api/bridge.py` | `Bridge`, the socket the gateway connects to |
+| `api/actions.py` | `Field`, `Caller` and `Action`: how a feature describes an action and who calls it |
 
 ## Threading
 
@@ -29,8 +32,8 @@ Tkinter is not thread-safe. Everything that touches a widget has to run on the t
 
 ```
 keyboard (console thread) ───┐
-                             ├─► executor queue ─► executor thread ─send()─► bus ─► feature's consumer
-mouse on a window (main loop)┘   (line, source)    runs the command                 (main loop thread)
+mouse on a window (main loop)├─► executor queue ─► executor thread ─send()─► bus ─► feature's consumer
+webapp (bridge thread) ──────┘   (line, source)    runs the command                 (main loop thread)
 ```
 
 Every input source hands its commands to the executor instead of running them itself. The console thread reads a line from the keyboard, submits it and waits until it has finished before showing the next prompt. A feature can submit one of its own commands with `ShellServices.execute`, for example when the game master clicks on a window. The executor runs the commands one at a time, in the order they arrive, so it is the only thread that ever changes feature state.
@@ -82,6 +85,8 @@ What a feature receives in `build()`:
 | `windows` | The window service, for windows and slots |
 | `send(target, command, arg=None)` | Puts a message on the bus. Normally the target is the feature itself. |
 | `subscribe(consumer)` | Registers the feature's bus consumer, bound to its own name |
+| `publish_state(snapshot, schema, view=None)` | Offers a public state to the player webapp; see [the player webapp](#the-player-webapp) |
+| `register_action(name, fields, permission, handler, reply=None)` | Offers an action to the player webapp |
 | `execute(line, source)` | Runs one of the feature's own commands as if it had been typed, e.g. `execute("map fow reveal B3:D7", source="mirror")`. The command is queued on the executor and echoed in the console as `[mirror] map fow reveal B3:D7`; the call returns at once and is safe from any thread. Messages the command sends carry the source. Another feature's command, or the source `shell`, is refused. |
 | `config` | The feature's own section of `config.toml` |
 | `slot(window_name)` | Shortcut for a content slot named after the feature |
@@ -143,6 +148,95 @@ Things that have caused problems before:
 - Keep a reference to every `PhotoImage`. Tk does not keep the image data alive, and an image that is garbage collected turns blank without an error. Dropping the reference is also the only way to free its memory.
 - `root.update()` processes pending drawing but does not run `after()` callbacks. Code or tests that depend on the bus or timers need a running main loop.
 - `shutdown()` is called on exit and is the place to stop background threads or save state.
+
+## The player webapp
+
+The player webapp lets players follow the game on their own device and act as their character. Its server, the **gateway** (`gateway/` at the repository root), is a separate program that runs in a container and talks to the application only over the **bridge**, a local socket with a shared secret. Setting it up is described in [the setup guide](../../docs/webapp_setup.md), and the gateway itself in [its documentation](../../gateway/README.md).
+
+On the application's side the webapp is an input source in core, like the console, configured in `[api]` and off by default. A feature takes part by publishing a public state and registering actions on `ShellServices`; it never sees the bridge or the gateway. The combat tracker is the example: `features/combat/api.py`.
+
+### Publishing a state
+
+```python
+services.publish_state(lambda: public_state(self.combat), "combat/1",
+                       view=Path(__file__).parent / "web" / "view.js")
+```
+
+- **`snapshot()`** returns plain JSON data. It runs on the executor thread after every command while a gateway is connected, and its result is sent whenever it changed, with a new version number. Only features listed in `[api] share` are sent.
+- **What it may contain:** the state goes to every device, guests included, so it must never show more than the table screens do: no unrevealed monsters, no hidden sprites, nothing under the fog. The filtering belongs here, because anything sent can be read in a browser's developer tools.
+- **The schema** names the state's shape and version, such as `combat/1`. Change the number when the shape changes, so views written for the old one are skipped.
+- **The view** is optional: a JS module that draws the state in the webapp. It is sent to the gateway on every connect, so an edited view only needs a reconnect, and it may be at most 512 KiB. Without one, the webapp shows a generic view. How to write one is described in [gateway/webapp/views/README.md](../../gateway/webapp/views/README.md).
+
+### Registering an action
+
+```python
+from tablescreen.core.api import Field, quote
+
+services.register_action(
+    "heal", {"target": Field(str), "amount": Field(int, minimum=1)},
+    "player", self._heal_line, reply=first_line)
+
+def _heal_line(self, args, caller):
+    if caller.character is None:
+        raise ValueError("Your account isn't linked to a character.")
+    return f"hp {quote(args['target'])} +{args['amount']}"
+```
+
+- **Fields:** `Field(kind, required=True, choices=(), minimum=-9999, maximum=9999, max_length=64)`, with `kind` either `int` or `str`. Core checks every value against its field before the handler sees it. Unknown fields are refused, and text may not contain control characters.
+- **Permission:** `"player"` (players and the dm) or `"dm"` (the dm only). The dm may do everything.
+- **The handler** runs on the executor thread, as `handler(args, caller)`. It checks what only the feature knows (own character, whose turn it is) and returns one command line, which runs as if it had been typed, with the source `api:<user>`. The console echoes it as `[api:alice] hp Aria +4`. Build the line with `quote()` for every text value. Raising `ValueError` refuses the action; its message goes to the player.
+- **`caller`** is a `Caller` with `user`, `role` (`player` or `dm`), `character` (the linked character, or `None`) and `is_dm`, as the gateway vouches for it.
+- **The reply** is what the command printed. A first line starting with `[!]` or `Usage` marks the action as refused; later `[!]` lines are notices. `reply(output)` replaces the text for everyone but the dm, for output meant for the game master only (the combat tracker's hit point numbers).
+- **No questions:** the command must not ask anything. `ask()` raises `NoAnswer` for commands that didn't come from the console, and `can_ask()` in `core/console.py` lets a command print a notice for the game master instead.
+
+### The bridge
+
+Nothing listens at start-up, so the game master can prepare first. `api open` starts listening on `[api] bridge_host:bridge_port` (127.0.0.1:8765 by default) and the gateway, which keeps trying, connects; `api close` closes the bridge again. Each message is one JSON object per line, at most 1 MiB. The gateway proves it knows the shared secret (`api/bridge.secret`, created on the first start) by answering a challenge with an HMAC within 5 seconds; the secret itself never crosses the wire. The wire format is `bridge_protocol.py` at the repository root, used by both sides.
+
+| From | Message | Meaning |
+|---|---|---|
+| application | `hello` | The challenge, with the protocol version |
+| gateway | `auth` | The answer |
+| application | `ready` | The shared features, their actions and views |
+| application | `state` | A feature's public state, with its schema and version |
+| gateway | `action` | A player's action, with the caller |
+| application | `result` | Its answer: done or refused, and the text |
+| application | `accounts` | `api user list` or `link`, asked of the gateway |
+| gateway | `accounts_result` | The answer |
+
+Everything the gateway sends is untrusted: `bridge_protocol.check()` validates every message before anything else looks at it. An invalid action is refused; any other bad message is ignored, with a note in the console. The connection is dropped only for a failed handshake, or when the gateway stops reading what the application sends. A newly authenticated connection replaces the old one, as when the gateway restarts.
+
+Accounts live in the gateway. The application never sees a password; it only lists the accounts and links characters to them:
+
+```
+api                         status: the bridge, the gateway, the shared features
+api open                    open the table: let the gateway connect
+api close                   close it: the players see the table as offline
+api user list               the gateway's accounts and their characters
+api user link alice Aria    the character an account plays
+api user unlink alice
+api user notes show alice   the game master's notes to that player
+api user notes add alice <text | file.txt>
+api user notes clear alice
+```
+
+The `api user` commands need an open table, since the gateway answers them. `tools/bridge_test_client.py` stands in for the gateway, to try the application's side by hand; it needs an open table too.
+
+### Configuration
+
+```toml
+[api]
+enabled = false             # true to have the API (`api open` then opens the table)
+share = ["combat"]          # one webapp tab per feature listed here
+bridge_host = "127.0.0.1"
+bridge_port = 8765
+secret_file = "api/bridge.secret"
+
+[api.views]
+combat = "auto"             # auto | webapp | feature | generic: which view a tab uses
+```
+
+`auto` uses the webapp's own view for a tab if there is one, else the feature's, else the generic one; the other values force where the tab starts.
 
 ## Shutting down
 

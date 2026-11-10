@@ -1,0 +1,466 @@
+/* The webapp's look: a night-dark temple (the cornice and two columns frame
+   every page) with the content on parchment. Views use the variables below;
+   inside a parchment card they are redefined as ink on parchment, so a view
+   needs no colours of its own. Images: theme/ (the parchment is derived from
+   a texture by www.myfreetextures.com). */
+
+:root {
+  /* On the dark stone around the page. */
+  --bg: rgba(255, 255, 255, 0.05);
+  --card: rgba(255, 255, 255, 0.08);
+  --text: #e8dec6;
+  --muted: #b9ad94;
+  --accent: #d4b06a;
+  --accent-text: #1a1208;
+  --border: rgba(186, 174, 150, 0.45);
+  --error: #ff9d8c;
+  --success: #8fcf7f;
+  --radius: 8px;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Noto Serif",
+           "DejaVu Serif", serif;
+  /* The temple. */
+  --edge: 4px;
+  --col-w: clamp(26px, 5.5vw, 64px);
+  --cornice-h: clamp(44px, 6.4vw, 74px);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  font: 16px/1.5 var(--serif);
+  background:
+    url(theme/grain.png),
+    radial-gradient(ellipse at 50% 0%, #1e2331 0%, #0e1017 58%, #08090c 100%) fixed;
+  background-color: #0a0b0f;
+}
+
+/* ── The temple: a cornice and two columns as tall as the page ── */
+
+.temple {
+  position: relative;
+  max-width: 1040px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: var(--cornice-h) calc(var(--edge) + var(--col-w) + 8px) 28px;
+}
+
+.cornice {
+  position: absolute;
+  top: 0;
+  left: var(--edge);
+  right: var(--edge);
+  height: var(--cornice-h);
+  background: url(theme/cornice.png) 0 0 / 100% 100% no-repeat;
+}
+
+.column {
+  position: absolute;
+  top: calc(var(--cornice-h) - 4px);
+  bottom: 0;
+  width: var(--col-w);
+  display: flex;
+  flex-direction: column;
+}
+
+.column.left { left: calc(var(--edge) + 2px); }
+.column.right { right: calc(var(--edge) + 2px); }
+.column > span { display: block; background-size: 100% 100%; background-repeat: no-repeat; }
+.column .cap { aspect-ratio: 160 / 84; }
+.column .base { aspect-ratio: 160 / 140; }
+.column .shaft { flex: 1; background-size: 100% auto; background-repeat: repeat-y; }
+.column.left .cap { background-image: url(theme/cap-left.png); }
+.column.left .shaft { background-image: url(theme/shaft-left.png); }
+.column.left .base { background-image: url(theme/base-left.png); }
+.column.right .cap { background-image: url(theme/cap-right.png); }
+.column.right .shaft { background-image: url(theme/shaft-right.png); }
+.column.right .base { background-image: url(theme/base-right.png); }
+
+/* ── Header ── */
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0 6px;
+  text-align: center;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #e9dcbc;
+}
+
+h2 {
+  margin: 0 0 14px;
+  font-size: 1.05rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+main {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 12px 0 0;
+  display: grid;
+  gap: 16px;
+}
+
+main.wide { max-width: 860px; }
+
+/* ── Parchment ── */
+
+.card {
+  /* Ink on parchment, for everything inside. */
+  --text: #1e1208;
+  --muted: #3f2b15;
+  --bg: rgba(255, 248, 228, 0.42);
+  --card: rgba(255, 250, 236, 0.74);
+  --border: rgba(74, 48, 22, 0.55);
+  --accent: #7a1414;
+  --accent-text: #f8ead0;
+  --error: #8c1010;
+  --success: #1d5a1d;
+  --health-green: #165216;
+  --health-yellow: #765200;
+  --health-orange: #8a3406;
+  --health-red: #760e0e;
+  --type-pc: #2a4f86;
+  --type-npc: #5d3a7e;
+  --type-monster: #8a2a1a;
+  position: relative;
+  isolation: isolate;
+  padding: 22px 20px;
+  color: var(--text);
+  color-scheme: light;
+}
+
+/* The sheet itself, behind the content: burnt edges, a torn outline (the
+   #torn filter in each page) and a shadow on the stone. */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 3px;
+  background: url(theme/parchment.jpg) center / cover;
+  box-shadow: inset 0 0 30px 6px rgba(72, 38, 12, 0.55);
+  filter: url(#torn) drop-shadow(0 8px 14px rgba(0, 0, 0, 0.6));
+}
+
+.card p { margin: 0 0 12px; }
+.card p:last-child { margin-bottom: 0; }
+.muted { color: var(--muted); }
+
+.defs { position: absolute; width: 0; height: 0; }
+
+/* ── Forms and buttons ── */
+
+label {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-weight: 700;
+}
+
+.hint { font-weight: 400; color: var(--muted); }
+
+input, select {
+  width: 100%;
+  padding: 10px 12px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+input::placeholder { color: var(--muted); opacity: 0.8; font-weight: 400; }
+
+input:focus, select:focus, button:focus-visible, .button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+button, .button {
+  display: inline-block;
+  padding: 9px 16px;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--accent-text);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button.secondary, .button.secondary {
+  color: var(--text);
+  background: transparent;
+  border-color: var(--border);
+}
+
+button:disabled { opacity: 0.6; cursor: wait; }
+
+[hidden] { display: none !important; }
+
+.error { color: var(--error); font-weight: 700; }
+.success { color: var(--success); font-weight: 700; }
+.notice { color: var(--accent); font-weight: 700; }
+
+/* ── Who you are and the table's status (on the stone) ── */
+
+.card.who {
+  /* A card for its layout, but on the stone: the stone's colours again. */
+  --text: #e8dec6;
+  --muted: #b9ad94;
+  --border: rgba(186, 174, 150, 0.45);
+  --accent: #d4b06a;
+  --accent-text: #1a1208;
+  padding: 0;
+  text-align: center;
+  color: var(--text);
+  color-scheme: dark;
+}
+
+.who::before { display: none; }
+.who .actions { justify-content: center; }
+.who button, .who .button { padding: 6px 12px; font-size: 0.9rem; }
+
+.status {
+  font-size: 0.85rem;
+  padding: 1px 12px;
+  border-radius: 999px;
+  color: var(--success);
+  border: 1px solid currentColor;
+}
+
+.status.offline { color: var(--muted); }
+
+.banner {
+  margin: 8px 0 0;
+  padding: 8px 14px;
+  border-radius: 6px;
+  text-align: center;
+  font-weight: 700;
+  color: #f8ead0;
+  background: #6e1414;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Tabs: bookmark ribbons hanging over the page's top edge ── */
+
+.tabs {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 0 16px;
+  margin-bottom: -40px;
+  filter: drop-shadow(1px 3px 3px rgba(0, 0, 0, 0.5));
+}
+
+.tab {
+  padding: 10px 18px 22px;
+  border: 0;
+  border-radius: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #d6b9a2;
+  background: linear-gradient(90deg, #3c0f0d 0 3px, #5a1a17 3px calc(100% - 3px), #3c0f0d 0);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 9px), 0 100%);
+}
+
+.tab.selected {
+  padding-bottom: 30px;
+  color: #fbe9c8;
+  background: linear-gradient(90deg, #5e0f0f 0 3px, #8a1c1c 3px calc(100% - 3px), #4e0b0b 0);
+}
+
+.tab.unread::after {          /* a new note from the game master */
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: #ffd76a;
+  box-shadow: 0 0 6px #ffd76a;
+}
+
+.panel { padding-top: 56px; }
+
+.notes { white-space: pre-wrap; overflow-wrap: anywhere; font-weight: 600; }
+.notes.empty { color: var(--muted); }
+
+.stale { opacity: 0.6; filter: grayscale(0.6); }
+
+.caption { margin-top: 14px; font-size: 0.8rem; color: var(--muted); }
+
+/* ── The generic view ── */
+
+.gv-object {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 0;
+}
+
+.gv-object dt { color: var(--muted); font-weight: 600; }
+.gv-object dd { margin: 0; overflow-wrap: anywhere; font-weight: 600; }
+.gv-list { margin: 0; padding-left: 1.4em; }
+.gv-list > li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.gv-empty { color: var(--muted); }
+
+.gv-actions { display: grid; gap: 12px; margin-top: 16px; }
+.gv-action { padding: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+.gv-action::before { display: none; }
+.gv-action h3 { margin: 0 0 8px; font-size: 1rem; text-transform: capitalize; }
+.gv-result { margin: 8px 0 0; font-weight: 700; }
+
+/* ── Character intros (intro.js): full screen, before the webapp ── */
+
+body.pending main { visibility: hidden; }      /* until the first hello: intro or not */
+body.intro-running { overflow: hidden; }
+
+.intro {
+  --intro-color: #d4b06a;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: #000;
+  color: #f2ead8;
+}
+
+.intro-clip {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+}
+
+.intro-clip.front { z-index: 2; }
+
+.intro-ui {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: 8vh;
+  transform: translateX(-50%);
+  width: min(420px, calc(100vw - 32px));
+  text-align: center;
+  text-shadow: 0 1px 4px #000;
+  transition: opacity 0.6s;
+}
+
+.intro-ui.gone { opacity: 0; pointer-events: none; }
+.intro-label { margin: 0; font-weight: 700; letter-spacing: 0.06em; }
+.intro-hint { margin: 8px 0 0; font-size: 0.85rem; opacity: 0.8; }
+
+.intro-bar {
+  height: 6px;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.intro-fill {
+  width: 0;
+  height: 100%;
+  background: var(--intro-color);
+  box-shadow: 0 0 10px var(--intro-color);
+}
+
+.intro-bar.waiting .intro-fill { animation: intro-pulse 1.6s ease-in-out infinite; }
+
+@keyframes intro-pulse { 50% { opacity: 0.35; } }
+
+.intro-buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 10px; }
+
+.intro-enter {
+  padding: 10px 28px;
+  font-size: 1.05rem;
+  letter-spacing: 0.05em;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--intro-color);
+  border-radius: 4px;
+  box-shadow: 0 0 18px var(--intro-color);
+}
+
+.intro-skip {
+  position: absolute;
+  z-index: 4;
+  right: 16px;
+  bottom: 16px;
+  padding: 8px 14px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #ddd;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+
+.intro-turn {
+  display: none;
+  position: absolute;
+  z-index: 3;
+  top: 16px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0 16px;
+  text-align: center;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+/* Upright phones: the whole (wide) picture across the middle. */
+@media (orientation: portrait) {
+  .intro-clip { object-fit: contain; }
+  .intro-turn { display: block; }
+}
+
+.intro-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 900ms cubic-bezier(0.3, 0, 0.2, 1);
+}
+
+.intro-flash.black { background: #000; }
+.intro-flash.on { opacity: 1; transition: none; }
+
+/* ── Narrow phones: a little more room between the columns ── */
+
+@media (max-width: 380px) {
+  .temple { padding-left: calc(var(--edge) + var(--col-w) + 4px);
+            padding-right: calc(var(--edge) + var(--col-w) + 4px); }
+  .card { padding: 20px 14px; }
+  .panel { padding-top: 54px; }
+}
